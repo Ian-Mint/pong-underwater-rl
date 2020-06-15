@@ -191,6 +191,12 @@ class DynamicPongEnv(gym.Env):
 
 # noinspection PyAbstractClass
 class ParDynamicPongEnv(DynamicPongEnv):
+    """
+    Threaded version of DynamicPongEnv. Instead of executing the next step only when `step` is called, the step for
+    each possible action is executed ahead of time, and the results are retrieved depending on the desired action. The
+    environment then continues from the selected action and the parallel environments are discarded.
+    """
+
     def __init__(self,
                  max_score=20,
                  width=400,
@@ -206,27 +212,29 @@ class ParDynamicPongEnv(DynamicPongEnv):
                          our_paddle_height, their_paddle_height, their_update_probability)
 
         self._init_step_thread()
-        # self._par_step()
 
     def _init_step_thread(self):
-        self._step_thread = threading.Thread(target=self._par_step)
+        """
+        Create and start the thread to execute environment step
+        """
+        self._step_thread = mp.Process(target=self._par_step())
+        # self._step_thread = threading.Thread(target=self._par_step)
         self._step_thread.start()
 
     def _par_step(self):
-        max_workers = mp.cpu_count() - 1 if mp.cpu_count() > 1 else 1
-        # with mp.Pool(max_workers) as pool:
-        #     result = pool.map(self._step_worker, zip((deepcopy(self.env) for _ in self.actions), self.actions))
-        result = map(self._step_worker, zip((deepcopy(self.env) for _ in self.actions), self.actions))
-        self._step_result = result
-        # return result
+        """
+        Parallelizable step function. For now, the environment is so simple that launching processes is far too
+        expensive.
+        """
+        self._step_result = map(self._step_worker, zip((deepcopy(self.env) for _ in self.actions), self.actions))
 
     @staticmethod
     def _step_worker(args):
         """
-        Move the environment to the next state according to the provided action.
+        Given an environment and action return the reward and next state of the environment.
 
-        :param action: {0: no-op, 1: up, 2: down}
-        :return: (data, reward)
+        :param args: (environment, action)
+        :return: (environment, data, reward)
         """
         env, action = args
         reward = env.step(action)
@@ -240,7 +248,7 @@ class ParDynamicPongEnv(DynamicPongEnv):
         :param action: {0: no-op, 1: up, 2: down}
         :return: (data, reward, episode_over, info)
         """
-        self._step_thread.join()
+        self._step_thread.join(timeout=1)
         self.env, self.frame, reward = next(islice(self._step_result, action, action + 1))
 
         self._init_step_thread()
