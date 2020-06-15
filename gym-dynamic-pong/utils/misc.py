@@ -8,7 +8,7 @@ def bool_array_to_rgb(array: np.ndarray) -> np.ndarray:
     :param array: 2d boolean numpy array
     :return: HxWx3 tensor
     """
-    assert array.dtype == np.bool, "array must be boolean"
+    # assert array.dtype == np.bool, "array must be boolean"
     array = array.astype(np.uint8) * (2 ** 8 - 1)
     empty = np.zeros_like(array)
     return np.stack([array, empty, empty], axis=2)

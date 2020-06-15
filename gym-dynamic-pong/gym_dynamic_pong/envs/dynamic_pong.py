@@ -1,6 +1,12 @@
+from copy import deepcopy
+from itertools import islice
+import multiprocessing as mp
 import os
+from queue import Queue
+import threading
 import time
-from typing import Tuple
+import time
+from typing import Tuple, Callable
 
 import gym
 import matplotlib.pyplot as plt
@@ -24,7 +30,7 @@ class DynamicPongEnv(gym.Env):
                  their_paddle_speed=3,
                  our_paddle_height=45,
                  their_paddle_height=45,
-                 their_update_probability=0.2,):
+                 their_update_probability=0.2, ):
 
         for v in width, height:
             assert isinstance(v, int), "width and height must be integers"
@@ -51,6 +57,7 @@ class DynamicPongEnv(gym.Env):
 
         self.observation_space = spaces.Box(low=False, high=True, dtype=np.bool,
                                             shape=(self.env.get_state_size()))
+        self.actions = (0, 1, 2)
         self.action_space = spaces.Discrete(3)  # initialize discrete action space with 3 actions
         self.ale = ALEInterfaceMock(self.env, self.max_score)
 
@@ -174,12 +181,71 @@ class DynamicPongEnv(gym.Env):
         Create a ball object
         """
         ball = Ball(self.height, self.width)
-        ball.x_pos = self.width // 2
-        ball.y_pos = self.height // 2
+        ball.x_pos = self.width / 2
+        ball.y_pos = self.height / 2
         return ball
 
     def _init_score(self):
         raise NotImplementedError()
+
+
+# noinspection PyAbstractClass
+class ParDynamicPongEnv(DynamicPongEnv):
+    def __init__(self,
+                 max_score=20,
+                 width=400,
+                 height=300,
+                 default_speed=3,
+                 snell_speed=3,
+                 our_paddle_speed=3,
+                 their_paddle_speed=3,
+                 our_paddle_height=45,
+                 their_paddle_height=45,
+                 their_update_probability=0.2, ):
+        super().__init__(max_score, width, height, default_speed, snell_speed, our_paddle_speed, their_paddle_speed,
+                         our_paddle_height, their_paddle_height, their_update_probability)
+
+        self._init_step_thread()
+        # self._par_step()
+
+    def _init_step_thread(self):
+        self._step_thread = threading.Thread(target=self._par_step)
+        self._step_thread.start()
+
+    def _par_step(self):
+        max_workers = mp.cpu_count() - 1 if mp.cpu_count() > 1 else 1
+        # with mp.Pool(max_workers) as pool:
+        #     result = pool.map(self._step_worker, zip((deepcopy(self.env) for _ in self.actions), self.actions))
+        result = map(self._step_worker, zip((deepcopy(self.env) for _ in self.actions), self.actions))
+        self._step_result = result
+        # return result
+
+    @staticmethod
+    def _step_worker(args):
+        """
+        Move the environment to the next state according to the provided action.
+
+        :param action: {0: no-op, 1: up, 2: down}
+        :return: (data, reward)
+        """
+        env, action = args
+        reward = env.step(action)
+        frame = env.to_numpy()
+        return env, bool_array_to_rgb(frame), reward
+
+    def step(self, action: int) -> Tuple[np.ndarray, int, bool, dict]:
+        """
+        Move the environment to the next state according to the provided action.
+
+        :param action: {0: no-op, 1: up, 2: down}
+        :return: (data, reward, episode_over, info)
+        """
+        self._step_thread.join()
+        self.env, self.frame, reward = next(islice(self._step_result, action, action + 1))
+
+        self._init_step_thread()
+
+        return bool_array_to_rgb(self.frame), reward, self.episode_is_over(), {}  # {} is a generic info dictionary
 
 
 class ALEInterfaceMock:

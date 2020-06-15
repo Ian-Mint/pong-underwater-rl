@@ -1,1 +1,1 @@
-from gym_dynamic_pong.envs.dynamic_pong import DynamicPongEnv
+from gym_dynamic_pong.envs.dynamic_pong import DynamicPongEnv, ParDynamicPongEnv

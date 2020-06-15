@@ -17,6 +17,9 @@ class Paddle(Rectangle):
         self.set_paddle_left_right()
 
     def set_paddle_left_right(self):
+        """
+        Set which side the paddle is on depending on the value of `self.side`, 'left' or 'right'.
+        """
         if self.side == 'left':
             self.x_pos = self.width / 2
         elif self.side == 'right':
@@ -25,14 +28,20 @@ class Paddle(Rectangle):
             raise ValueError("`which` must be 'left' or 'right'")
 
     def up(self):
+        """
+        Move the paddle up.
+        """
         self.y_pos += self.speed
 
     def down(self):
+        """
+        Move the paddle down.
+        """
         self.y_pos -= self.speed
 
     def get_edges(self) -> Dict[str, Line]:
         """
-        Only return the field-side edge
+        Only return the field-side edge. Refer to `Rectangle.get_edges` for more details.
         """
         if self.side == 'right':
             return {'left': Line((self.left_bound, self.bot_bound), (self.left_bound, self.top_bound))}
@@ -41,10 +50,16 @@ class Paddle(Rectangle):
 
     @property
     def y_pos(self):
+        """
+        y-position getter.
+        """
         return self._y_pos
 
     @y_pos.setter
     def y_pos(self, value):
+        """
+        y-position setter.
+        """
         if value - self.height / 2 < 0:
             self._y_pos = self.height / 2
         elif value + self.height / 2 > self.max_height:
