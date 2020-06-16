@@ -239,7 +239,7 @@ class ParDynamicPongEnv(DynamicPongEnv):
         env, action = args
         reward = env.step(action)
         frame = env.to_numpy()
-        return env, bool_array_to_rgb(frame), reward
+        return env, frame, reward
 
     def step(self, action: int) -> Tuple[np.ndarray, int, bool, dict]:
         """
