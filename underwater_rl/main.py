@@ -133,12 +133,15 @@ def train(env, n_episodes, history, render=False):
         state = get_state(obs)  # torch.Size([1, 4, 84, 84])
         total_reward = 0.0
         for t in count():
-            action = select_action(state)
-
             if render:
                 save_dir = os.path.join(args.store_dir, 'video')
                 env.render(mode=render, save_dir=save_dir)
 
+            if args.random_agent:
+                action = env.select_action()
+                action = torch.tensor([action], device='cpu')
+            else:
+                action = select_action(state)
             obs, reward, done, info = env.step(action)
 
             total_reward += reward
@@ -294,6 +297,8 @@ if __name__ == '__main__':
                           help='Probability that the opponent moves in the direction of the ball (default: 0.2)')
     env_args.add_argument('--state', default='binary', type=str, choices=['binary', 'color'],
                           help='state representation (default: binary)')
+    env_args.add_argument('--random-agent', dest='random_agent', default=False, action='store_true',
+                          help="Use a random agent with update-probability 0.3")
 
     '''RL args'''
     rl_args = parser.add_argument_group("Model", "Reinforcement learning model parameters")

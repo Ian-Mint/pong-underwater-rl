@@ -1,13 +1,12 @@
 import math
 import os
-import time
+import random
 from typing import Tuple
 
 import gym
 import matplotlib.pyplot as plt
 import numpy as np
 from gym import spaces
-
 from gym_dynamic_pong.utils.preprocessing import rgb_array_to_binary
 from gym_dynamic_pong.utils.sprites import *
 
@@ -78,6 +77,20 @@ class DynamicPongEnv(gym.Env):
                                             shape=(self.env.get_state_size()))
         self.action_space = spaces.Discrete(3)  # initialize discrete action space with 3 actions
         self.ale = ALEInterfaceMock(self.env, self.max_score)
+
+    def select_action(self):
+        """
+        Select action based on the position of the ball
+        """
+        if random.random() < 0.3:
+            if self.env.paddle_r.y < self.env.ball.y:
+                if self.env.paddle_r.top_bound < self.env.top_bound:
+                    return 1  # up
+            else:
+                if self.env.paddle_r.bot_bound > self.env.bot_bound:
+                    return 2  # down
+
+        return 0  # no-op
 
     def step(self, action) -> Tuple[np.ndarray, int, bool, dict]:
         """
