@@ -395,7 +395,7 @@ if __name__ == '__main__':
         state_type=args.state,
     )
     # TODO: consider removing some of the wrappers - may improve performance
-    env = make_env(env, episodic_life=True, clip_rewards=True)
+    env = make_env(env, stack_frames=not args.random_agent, episodic_life=True, clip_rewards=True)
 
     # create networks
     architecture = args.network
