@@ -3,27 +3,25 @@ Usage:
 `python dashboard.py`
 """
 import os.path
-from typing import List, Dict, Union
-import sys
+from typing import List
 
-import dash
 import dash_bootstrap_components as dbc
 import dash_core_components as dcc
 import dash_html_components as html
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash.dependencies import Input, Output, State
-import numpy as np
 
 try:
     from .utils import *
     from .data_loader import *
-    from ..dashboard import app
+    from ..dashboard import dash_app, app
 except ImportError:
     from utils import *
     from data_loader import *
-    from __init__ import app
+    from __init__ import dash_app, app
 
 grid_searches = get_grid_searches()
 grid_search_params = get_all_grid_search_params()
@@ -63,7 +61,7 @@ invisible_grid_search_dropdown_div = html.Div(children=[
     id='grid-search-params-selector-div')
 
 # Create app layout
-app.layout = html.Div(
+dash_app.layout = html.Div(
     [
         # empty Div to trigger javascript file for graph resizing
         html.Div(id='output-clientside'),
@@ -188,11 +186,11 @@ app.layout = html.Div(
 )
 
 
-@app.callback(Output('grid-search-sliders', 'children'),
-              [Input('grid-search-selector', 'value'),
-               Input('grid-search-params-selector', 'value')],
-              [State('grid-search-sliders', 'children')],
-              prevent_initial_call=False)
+@dash_app.callback(Output('grid-search-sliders', 'children'),
+                   [Input('grid-search-selector', 'value'),
+                    Input('grid-search-params-selector', 'value')],
+                   [State('grid-search-sliders', 'children')],
+                   prevent_initial_call=False)
 def show_grid_search_sliders(grid_search: str, params: List[str], state: List):
     """
     Show the sliders that were selected using the multiple dropdown. Hide the others.
@@ -234,10 +232,10 @@ def assign_slider_text_update_callback(grid_search: str, param: str) -> None:
         value = marks[str(value)]
         return [f"{param}: {value}"]
 
-    app.callback(output=Output(prefix + '-slider-state', 'children'),
-                 inputs=[Input(prefix + '-slider', 'value')],
-                 state=[State(prefix + '-slider', 'marks')],
-                 prevent_initial_call=False)(slider_text_update)
+    dash_app.callback(output=Output(prefix + '-slider-state', 'children'),
+                      inputs=[Input(prefix + '-slider', 'value')],
+                      state=[State(prefix + '-slider', 'marks')],
+                      prevent_initial_call=False)(slider_text_update)
 
 
 # Construct slider inputs and assign callbacks to slider labels
@@ -250,8 +248,8 @@ for gs, param_dict in grid_search_params.items():
         slider_marks.append(State(gs + p + '-slider', 'marks'))
 
 
-@app.callback(Output('grid-search-params-selector-div', 'children'),
-              [Input('grid-search-selector', 'value')], )
+@dash_app.callback(Output('grid-search-params-selector-div', 'children'),
+                   [Input('grid-search-selector', 'value')], )
 def make_grid_search_param_selector(grid_search: str) -> List[dcc.Dropdown]:
     if grid_search:
         options = grid_search_params[grid_search].keys()
@@ -265,7 +263,7 @@ def make_grid_search_param_selector(grid_search: str) -> List[dcc.Dropdown]:
         return invisible_grid_search_dropdown_div
 
 
-@app.callback(
+@dash_app.callback(
     Output('experiment-table', 'children'),
     [Input('experiment-selector', 'value')]
 )
@@ -278,7 +276,7 @@ def make_experiment_table(experiments: List[str]) -> List:
     return table
 
 
-@app.callback(
+@dash_app.callback(
     Output('moving-avg-slider-text', 'children'),
     [Input('moving-avg-slider', 'value')]
 )
@@ -286,7 +284,7 @@ def update_moving_avg_slider_text(value: int) -> List:
     return [f"Moving average length: {value}"]
 
 
-@app.callback(
+@dash_app.callback(
     Output('reward-plot', 'figure'),
     [Input('experiment-selector', 'value'),
      Input('moving-avg-slider', 'value')]
@@ -299,7 +297,7 @@ def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figu
     return fig
 
 
-@app.callback(
+@dash_app.callback(
     Output('step-plot', 'figure'),
     [Input('experiment-selector', 'value'),
      Input('moving-avg-slider', 'value')]
@@ -312,7 +310,7 @@ def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figu
     return fig
 
 
-@app.callback(
+@dash_app.callback(
     Output('grid-search-plot', 'figure'),
     [Input('grid-search-selector', 'value'),
      Input('grid-search-params-selector', 'value')] + slider_inputs,
@@ -378,10 +376,10 @@ def make_grid_search_plot(grid_search, axis_params, *args):
                                      yaxis_title=axis_params[1],
                                      zaxis_title="Average Reward",
                                      camera=dict(
-                                        up=dict(x=0, y=0, z=1),
-                                        center=dict(x=0, y=0, z=-0.5),
-                                        eye=dict(x=1.25, y=1.25, z=1.1)
-                                    )),
+                                         up=dict(x=0, y=0, z=1),
+                                         center=dict(x=0, y=0, z=-0.5),
+                                         eye=dict(x=1.25, y=1.25, z=1.1)
+                                     )),
                           margin=dict(l=0, r=0, b=0, t=0))
         return fig
     elif len(axis_params) > 2:
@@ -402,9 +400,12 @@ def get_step_plot(experiments: List[str], moving_avg_len) -> go.Figure:
 
 if __name__ == '__main__':
     # noinspection PyTypeChecker
-    app.run_server(debug=False,
+    app.run(host='127.0.0.1', debug=True, port=8050)
+    """
+    dash_app.run_server(debug=False,
                    dev_tools_hot_reload=False,
                    host=os.getenv("HOST", "127.0.0.1"),
                    # host=os.getenv("HOST", "192.168.1.10"),
                    port=os.getenv("PORT", "8050"),
                    )
+    """
