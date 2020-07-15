@@ -13,7 +13,7 @@ __all__ = ['get_grid_searches', 'get_experiments', 'get_rewards_history_df', 'ge
            'get_parameters_df', 'get_grid_search_params', 'get_grid_search_experiments', 'get_all_grid_search_params',
            'get_grid_search_results_value']
 
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 
 @cache.memoize()
