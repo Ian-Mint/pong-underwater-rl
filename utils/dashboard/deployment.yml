@@ -1,0 +1,44 @@
+# Version of Kubernetes API to be used
+apiVersion: apps/v1beta1
+# type of resource
+kind: Deployment
+metadata:
+# name of the pod
+  name: dashboard-app
+spec:
+  # defines the number of copies of the pods we want to run
+  replicas: 3
+  selector:
+    matchLabels:
+    # label to select all "dashboard-app" pods
+      app: dashboard-app
+  template:
+    metadata:
+      labels:
+        # label “app=dashboard-app” to all pods created by this deployment
+        app: dashboard-app
+    spec:
+      containers:
+        # name of the container
+      - name: dashboard-container
+        # container image to run
+        image: gcr.io/twds-project/dashboard-app:latest
+        volumeMounts:
+            - mountPath: /data
+              name: data
+              - mountPath: /dev/shm
+                name: dshm
+        resources:
+          limits:
+            memory: 8Gi
+            cpu: "1"
+          requests:
+            memory: 6Gi
+            cpu: "1"
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: storage
+        - name: dshm
+          emptyDir:
+            medium: Memory
