@@ -13,7 +13,14 @@ __all__ = ['get_grid_searches', 'get_experiments', 'get_rewards_history_df', 'ge
            'get_parameters_df', 'get_grid_search_params', 'get_grid_search_experiments', 'get_all_grid_search_params',
            'get_grid_search_results_value']
 
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+# find the root dir
+root_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+if not os.path.isdir(os.path.join(root_dir, 'experiments')):
+    root_dir = os.path.dirname(root_dir)
+    if not os.path.isdir(os.path.join(root_dir, 'experiments')):
+        root_dir = '/data'
+        exp_dir = os.path.join(root_dir, 'experiments')
+        assert os.path.isdir(exp_dir), f"cannot find path {exp_dir}"
 
 
 @cache.memoize()
