@@ -11,16 +11,9 @@ except ImportError:
 
 __all__ = ['get_grid_searches', 'get_experiments', 'get_rewards_history_df', 'get_steps_history_df',
            'get_parameters_df', 'get_grid_search_params', 'get_grid_search_experiments', 'get_all_grid_search_params',
-           'get_grid_search_results_value']
+           'get_grid_search_results_value', 'get_users']
 
-# find the root dir
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-if not os.path.isdir(os.path.join(root_dir, 'experiments')):
-    root_dir = os.path.dirname(root_dir)
-    if not os.path.isdir(os.path.join(root_dir, 'experiments')):
-        root_dir = '/data'
-        exp_dir = os.path.join(root_dir, 'experiments')
-        assert os.path.isdir(exp_dir), f"cannot find path {exp_dir}"
+root_dir = '/data'
 
 
 @cache.memoize()
@@ -93,24 +86,34 @@ def get_grid_search_experiments_list(search: str) -> List[str]:
 
 
 @cache.memoize()
-def get_experiments() -> List[Dict]:
+def get_experiments(user) -> List[Dict]:
     """
     Get all experiments in the experiments directory formatted for use in a plotly dropdown
 
     :return: List of experiments
     """
-    return _get_directory_listing_for_dash_dropdown('experiments')
+    return dash_dropdown_list_from_iterable(_get_directory_listing('experiments', user))
 
 
 @cache.memoize()
-def get_all_grid_search_params() -> Dict[str, Dict[str, List]]:
+def get_users() -> List[Dict]:
+    """
+    Get all experiments in the experiments directory formatted for use in a plotly dropdown
+
+    :return: List of users
+    """
+    return dash_dropdown_list_from_iterable(os.listdir('/data'))
+
+
+@cache.memoize()
+def get_all_grid_search_params(user) -> Dict[str, Dict[str, List]]:
     """
 
     :return: e.g. {'experiment1': {'param1': [1, 2, 3], 'param2': [2, 3]},
                    'experiment2': {'param1': [2, 3, 4], 'param3': [1]}
     """
     result = dict()
-    for search in get_grid_searches():
+    for search in get_grid_searches(user):
         experiments = get_grid_search_experiments_list(search['label'])
         result[search['label']] = get_grid_search_params(experiments)
     return result
@@ -135,38 +138,35 @@ def get_grid_search_params(experiments) -> Dict[str, List]:
 
 
 @cache.memoize()
-def get_grid_searches() -> List[Dict]:
+def get_grid_searches(user) -> List[Dict]:
     """
     Get all searches in the grid-searches directory formatted for use in a plotly dropdown
 
     :return: List of grid searches
     """
-    return _get_directory_listing_for_dash_dropdown('grid-search')
+    return dash_dropdown_list_from_iterable(_get_directory_listing('grid-search', user))
 
 
 @cache.memoize()
-def get_grid_search_experiments(grid_search: str) -> List[str]:
+def get_grid_search_experiments(grid_search: str, user) -> List[str]:
     """
     List of all grid search experiments in a particular search
 
     :param grid_search: directory name
+    :param user: matching the path /data/<user>
     :return: list of experiments
     """
-    return _get_directory_listing(os.path.join('grid-search', grid_search))
+    return _get_directory_listing(os.path.join('grid-search', grid_search), user)
+
+
+def dash_dropdown_list_from_iterable(iterable):
+    value = [{'label': v, 'value': v} for v in iterable]
+    return sorted(value, key=lambda x: x['label'])
 
 
 @cache.memoize()
-def _get_directory_listing_for_dash_dropdown(directory) -> List[Dict]:
-    """
-    Get all sub-directories in `directory` for use in a plotly dropdown
-    """
-    experiments = [{'label': e, 'value': e} for e in _get_directory_listing(directory)]
-    return sorted(experiments, key=lambda x: x['label'])
-
-
-@cache.memoize()
-def _get_directory_listing(directory) -> List[str]:
-    path = os.path.join(root_dir, directory)
+def _get_directory_listing(directory, user) -> List[str]:
+    path = os.path.join(root_dir, user, 'pong-underwater-rl', directory)
     return os.listdir(path)
 
 

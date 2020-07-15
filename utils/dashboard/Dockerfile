@@ -28,8 +28,12 @@ COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY gunicorn.conf /etc/supervisor/conf.d/gunicorn.conf
 
 # For testing only
-COPY test/experiments /experiments
-COPY test/grid-search /grid-search
+RUN mkdir -p /data/ian
+RUN mkdir -p /data/ria
+COPY test/experiments /data/ian/experiments
+COPY test/experiments /data/ria/experiments
+COPY test/grid-search /data/ian/grid-search
+COPY test/grid-search /data/ria/grid-search
 
 # Start processes
 CMD ["/usr/bin/supervisord"]

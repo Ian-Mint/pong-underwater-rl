@@ -13,6 +13,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash.dependencies import Input, Output, State
+from dash.exceptions import PreventUpdate
 
 try:
     from .utils import *
@@ -23,34 +24,32 @@ except ImportError:
     from data_loader import *
     from __init__ import dash_app, app
 
-grid_searches = get_grid_searches()
-grid_search_params = get_all_grid_search_params()
-
 
 def get_sliders() -> html.P:
     """
     Return a div of hidden divs with slider text above the slider.
     """
     sliders = []
-    for grid_search, param_dict in grid_search_params.items():
-        for param, values in param_dict.items():
-            prefix = grid_search + param
-            s = html.Div([
-                html.P(children=[param], id=prefix + '-slider-state'),
-                dcc.Slider(
-                    id=prefix + '-slider',
-                    min=1,
-                    max=len(values),
-                    value=1,
-                    step=1,
-                    included=False,
-                    marks={n + 1: v for n, v in enumerate(values)}
-                ),
-            ],
-                style={'display': 'none'},
-                id=prefix + '-slider-div',
-            )
-            sliders.append(s)
+    for user in get_users():
+        for grid_search, param_dict in get_all_grid_search_params(user).items():
+            for param, values in param_dict.items():
+                prefix = '-'.join([user, grid_search, param])
+                s = html.Div([
+                    html.P(children=[param], id=prefix + '-slider-state'),
+                    dcc.Slider(
+                        id=prefix + '-slider',
+                        min=1,
+                        max=len(values),
+                        value=1,
+                        step=1,
+                        included=False,
+                        marks={n + 1: v for n, v in enumerate(values)}
+                    ),
+                ],
+                    style={'display': 'none'},
+                    id=prefix + '-slider-div',
+                )
+                sliders.append(s)
     return html.P(children=sliders, id='grid-search-sliders')
 
 
@@ -65,6 +64,10 @@ dash_app.layout = html.Div(
     [
         # empty Div to trigger javascript file for graph resizing
         html.Div(id='output-clientside'),
+
+        # Storage
+        dcc.Store(id='grid-searches-store', storage_type='session'),
+        dcc.Store(id='grid-search-params-store', storage_type='session'),
 
         # Header
         html.Div(
@@ -89,6 +92,18 @@ dash_app.layout = html.Div(
             style={"margin-bottom": "25px"},
         ),
 
+        # User selection
+        html.Div(
+            html.P(
+                "Select experiments:",
+                dcc.Dropdown(
+                    id='user-selector',
+                    options=get_users(),
+                    multi=True
+                ),
+            )
+        ),
+
         # Reward and steps
         html.Div(
             [
@@ -99,7 +114,7 @@ dash_app.layout = html.Div(
                                 "Select experiments:",
                                 dcc.Dropdown(
                                     id='experiment-selector',
-                                    options=get_experiments(),
+                                    options=[dict(label='select a user', value='')],
                                     multi=True
                                 ),
                                 html.Br(),
@@ -158,7 +173,7 @@ dash_app.layout = html.Div(
                                 "Select grid search:",
                                 dcc.Dropdown(
                                     id='grid-search-selector',
-                                    options=grid_searches,
+                                    options=[dict(label='select a user', value=None)],
                                     multi=False
                                 ),
                                 invisible_grid_search_dropdown_div,
@@ -186,6 +201,27 @@ dash_app.layout = html.Div(
 )
 
 
+@dash_app.callback(Output('grid-search-store', 'data'),
+                   [Input('user-selector', 'value')],)
+def update_grid_search_store(user):
+    return get_grid_searches(user)
+
+
+@dash_app.callback(Output('grid-search-selector', 'options'),
+                   [Input('grid-search-store', 'modified_timestamp')],
+                   [State('grid-search-store', 'data')])
+def update_grid_search_selector(ts, data):
+    if ts is None:
+        raise PreventUpdate
+    return data
+
+
+@dash_app.callback(Output('experiment-selector', 'options'),
+                   [Input('user-selector', 'value')])
+def update_experiment_selector(user):
+    return get_experiments(user)
+
+
 @dash_app.callback(Output('grid-search-sliders', 'children'),
                    [Input('grid-search-selector', 'value'),
                     Input('grid-search-params-selector', 'value')],
@@ -201,7 +237,7 @@ def show_grid_search_sliders(grid_search: str, params: List[str], state: List):
     :return: updated state
     """
     ids = []
-    for gs, param_dict in grid_search_params.items():
+    for gs, param_dict in get_all_grid_search_params(user).items():
         for p in param_dict.keys():
             ids.append(gs + p + '-slider-div')
 
@@ -218,15 +254,16 @@ def show_grid_search_sliders(grid_search: str, params: List[str], state: List):
     return state
 
 
-def assign_slider_text_update_callback(grid_search: str, param: str) -> None:
+def assign_slider_text_update_callback(user: str, grid_search: str, param: str) -> None:
     """
     Register a callback on the text above categorical sliders. It will then update that text according to the current
     selection.
 
+    :param user: /data/<user>
     :param grid_search: the name of the grid search
     :param param: the name of the parameter the slider adjusts
     """
-    prefix = grid_search + param
+    prefix = '-'.join([user, grid_search, param])
 
     def slider_text_update(value: int, marks):
         value = marks[str(value)]
@@ -238,14 +275,20 @@ def assign_slider_text_update_callback(grid_search: str, param: str) -> None:
                       prevent_initial_call=False)(slider_text_update)
 
 
-# Construct slider inputs and assign callbacks to slider labels
-slider_inputs = []
-slider_marks = []
-for gs, param_dict in grid_search_params.items():
-    for p in param_dict.keys():
-        assign_slider_text_update_callback(gs, p)
-        slider_inputs.append(Input(gs + p + '-slider', 'value'))
-        slider_marks.append(State(gs + p + '-slider', 'marks'))
+def initialize_sliders():
+    global slider_inputs, slider_marks, user, param_dict
+    # Construct slider inputs and assign callbacks to slider labels
+    slider_inputs = []
+    slider_marks = []
+    for user in os.listdir('/data'):
+        for gs, param_dict in get_all_grid_search_params(user).items():
+            for p in param_dict.keys():
+                assign_slider_text_update_callback(user, gs, p)
+                slider_inputs.append(Input(gs + p + '-slider', 'value'))
+                slider_marks.append(State(gs + p + '-slider', 'marks'))
+
+
+initialize_sliders()
 
 
 @dash_app.callback(Output('grid-search-params-selector-div', 'children'),
