@@ -16,7 +16,7 @@ import dash
 from dash.dependencies import Input, Output, State, ALL
 from dash.exceptions import PreventUpdate
 
-INTERVAL = 5e3
+INTERVAL = int(100e3)
 
 try:
     from .utils import *
@@ -69,17 +69,18 @@ dash_app.layout = html.Div(
         html.Div(id='output-clientside'),
 
         # Storage
-        dcc.Store(id='grid-searches-store', storage_type='session'),
+        dcc.Store(id='grid-search-store', storage_type='session'),
         dcc.Store(id='grid-search-params-store', storage_type='session'),
         dcc.Store(id='slider-inputs-store', storage_type='session'),
         dcc.Store(id='slider-marks-store', storage_type='session'),
 
         # Intervals
-        dcc.Interval(id='user-monitor', interval=INTERVAL, n_intervals=0),
-        dcc.Interval(id='experiments-monitor', interval=INTERVAL, n_intervals=0),
-        dcc.Interval(id='grid-search-monitor', interval=INTERVAL, n_intervals=0),
+        # todo: remove max_intervals
+        dcc.Interval(id='user-monitor', interval=INTERVAL, max_intervals=1),
+        dcc.Interval(id='experiments-monitor', interval=INTERVAL, max_intervals=1),
+        dcc.Interval(id='grid-search-monitor', interval=INTERVAL),
         # todo: dynamically update plot using experiment-history-monitor
-        dcc.Interval(id='experiment-history-monitor', interval=INTERVAL, n_intervals=0),
+        dcc.Interval(id='experiment-history-monitor', interval=INTERVAL),
 
         # Header
         html.Div(
@@ -245,8 +246,12 @@ def monitor_memoized(memoized: Callable, f: Callable, *args):
 
 
 @dash_app.callback(Output('grid-search-store', 'data'),
-                   [Input('user-selector', 'value'), Input('grid-search-monitor', 'n_intervals')], )
+                   [Input('user-selector', 'value'), Input('grid-search-monitor', 'n_intervals')],
+                   prevent_initial_call=True)
 def update_grid_search_store(user, n_intervals):
+    if user is None:
+        return [dict(label='', value='')]
+
     trigger_id = dash.callback_context.triggered[0]['prop_id'].split('.')[0]
     if trigger_id == 'user-selector':
         return get_grid_searches_for_dropdown(user)
@@ -267,8 +272,12 @@ def update_grid_search_selector(ts, data):
 
 @dash_app.callback([Output('experiment-selector', 'options'), Output('experiment-selector', 'placeholder')],
                    [Input('experiments-monitor', 'n_intervals'), Input('user-selector', 'value')],
-                   [State('experiment-selector', 'placeholder')])
+                   [State('experiment-selector', 'placeholder')],
+                   prevent_initial_call=True)
 def update_experiment_selector(n_intervals, user, placeholder):
+    if user is None:
+        raise PreventUpdate
+
     trigger_id = dash.callback_context.triggered[0]['prop_id'].split('.')[0]
     if trigger_id == 'user-selector':
         return get_experiments_for_dropdown(user), placeholder
@@ -294,7 +303,9 @@ def make_grid_search_sliders(params: List[str], user: str, grid_search: str, sli
     :param sliders: children of the grid-search-sliders Div
     :return: updated state
     """
-    ids = []
+    if params is None or user is None:
+        raise PreventUpdate
+
     param_dict = get_all_grid_search_params(user)[grid_search]
 
     new_sliders_set = {create_slider(user, grid_search, k, v) for k, v in param_dict if k in params}
@@ -332,11 +343,12 @@ def make_grid_search_param_selector(user: str, grid_search: str) -> List[dcc.Dro
 
 @dash_app.callback(
     Output('experiment-table', 'children'),
-    [Input('experiment-selector', 'value')]
+    [Input('experiment-selector', 'value')],
+    [State('user-selector', 'value')]
 )
-def make_experiment_table(experiments: List[str]) -> List:
+def make_experiment_table(experiments: List[str], user: str) -> List:
     if experiments:
-        df = get_parameters_df(experiments)
+        df = get_parameters_df(user, experiments)
         table = dbc.Table.from_dataframe(df, striped=True, bordered=True, hover=True)
     else:
         table = dbc.Table.from_dataframe(pd.DataFrame())
@@ -354,26 +366,28 @@ def update_moving_avg_slider_text(value: int) -> List:
 @dash_app.callback(
     Output('reward-plot', 'figure'),
     [Input('experiment-selector', 'value'),
-     Input('moving-avg-slider', 'value')]
+     Input('moving-avg-slider', 'value')],
+    [State('user-selector', 'value')]
 )
-def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figure:
+def make_rewards_plot(experiments: List[str], moving_avg_window: int, user: str) -> go.Figure:
     if not experiments:
         fig = get_empty_sunburst("Select an experiment")
     else:
-        fig = get_reward_plot(experiments, moving_avg_window)
+        fig = get_reward_plot(user, experiments, moving_avg_window)
     return fig
 
 
 @dash_app.callback(
     Output('step-plot', 'figure'),
     [Input('experiment-selector', 'value'),
-     Input('moving-avg-slider', 'value')]
+     Input('moving-avg-slider', 'value')],
+    [State('user-selector', 'value')]
 )
-def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figure:
+def make_rewards_plot(experiments: List[str], moving_avg_window: int, user: str) -> go.Figure:
     if not experiments:
         fig = get_empty_sunburst("Select an experiment")
     else:
-        fig = get_step_plot(experiments, moving_avg_window)
+        fig = get_step_plot(user, experiments, moving_avg_window)
     return fig
 
 
@@ -383,10 +397,10 @@ def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figu
      Input('grid-search-selector', 'value'),
      Input('grid-search-params-selector', 'value'),
      Input('slider-inputs-store', 'data')],
-    [State('slider-state-store', 'data'),
+    [State(dict(type='grid-slider', user=ALL, grid_search=ALL, param=ALL), 'marks'),
      State('grid-search-sliders', 'children')]
 )
-def make_grid_search_plot(user, grid_search, axis_params, slider_values, slider_value_lookup, state):
+def make_grid_search_plot(user, grid_search, axis_params, slider_values, slider_value_lookup: List[List[Dict]], state):
     """
     Return the grid search plot.
 
@@ -399,14 +413,14 @@ def make_grid_search_plot(user, grid_search, axis_params, slider_values, slider_
     :param state: used to determine which sliders are visible and therefore, active
     :return:
     """
+    if not grid_search:
+        return get_empty_sunburst("Select a grid search")
+
     slider_params = dict()
     for v, lookup, s in zip(slider_values, slider_value_lookup, state):
         if s['props']['style'] is None:
-            p = s['props']['id'].replace(grid_search, '').split('-')[0]
+            p = s['props']['id']['param']
             slider_params[p] = lookup[str(v)]
-
-    if not grid_search:
-        return get_empty_sunburst("Select a grid search")
 
     if not axis_params:
         if not slider_params:
@@ -465,14 +479,14 @@ def make_grid_search_plot(user, grid_search, axis_params, slider_values, slider_
 
 
 @fig_formatter(t=50)
-def get_reward_plot(experiments: List[str], moving_avg_len) -> go.Figure:
-    df = get_rewards_history_df(experiments, moving_avg_len)
+def get_reward_plot(user: str, experiments: List[str], moving_avg_len) -> go.Figure:
+    df = get_rewards_history_df(user, experiments, moving_avg_len)
     return px.line(df, labels=dict(value='reward', index='episode', variable='experiment'))
 
 
 @fig_formatter(t=50)
-def get_step_plot(experiments: List[str], moving_avg_len) -> go.Figure:
-    df = get_steps_history_df(experiments, moving_avg_len)
+def get_step_plot(user: str, experiments: List[str], moving_avg_len) -> go.Figure:
+    df = get_steps_history_df(user, experiments, moving_avg_len)
     return px.line(df, labels=dict(value='steps', index='episode', variable='experiment'))
 
 

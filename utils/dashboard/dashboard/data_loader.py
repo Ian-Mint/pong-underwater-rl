@@ -261,10 +261,11 @@ def get_rewards_history_df(user: str, experiments: List[str], moving_avg_len=1) 
     return get_moving_average(df, moving_avg_len)
 
 
-def get_steps_history_df(experiments: List[str], moving_avg_len=1) -> pd.DataFrame:
+def get_steps_history_df(user: str, experiments: List[str], moving_avg_len=1) -> pd.DataFrame:
     """
     Get a dataframe of the number of steps in each episode for each experiment.
 
+    :param user:
     :param moving_avg_len:
     :param experiments: List of experiments.
     :return: `pd.DataFrame`
@@ -274,11 +275,11 @@ def get_steps_history_df(experiments: List[str], moving_avg_len=1) -> pd.DataFra
 
 
 @cache.memoize()
-def get_parameters_df(experiments: List[str]):
+def get_parameters_df(user, experiments: List[str]):
     df = pd.DataFrame()
     for e in experiments:
         params_dict = dict(experiment=e)
-        with open(os.path.join(root_dir, 'pong-underwater-rl', EXP_DIR, e, 'output.log')) as f:
+        with open(os.path.join(root_dir, user, 'pong-underwater-rl', EXP_DIR, e, 'output.log')) as f:
             params_dict.update(_parse_parameters(f.readline()))
         params_df = pd.DataFrame(params_dict, index=[e])
 
