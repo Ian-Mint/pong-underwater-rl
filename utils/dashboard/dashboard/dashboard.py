@@ -2,8 +2,8 @@
 Usage:
 `python dashboard.py`
 """
-import os.path
-from typing import List
+import os
+from typing import List, Callable, Dict, Tuple
 
 import dash_bootstrap_components as dbc
 import dash_core_components as dcc
@@ -12,46 +12,48 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from dash.dependencies import Input, Output, State
+import dash
+from dash.dependencies import Input, Output, State, ALL
+from dash.exceptions import PreventUpdate
+
+INTERVAL = 5e3
 
 try:
     from .utils import *
     from .data_loader import *
-    from ..dashboard import dash_app, app
+    from ..dashboard import dash_app, app, cache
 except ImportError:
     from utils import *
     from data_loader import *
-    from __init__ import dash_app, app
-
-grid_searches = get_grid_searches()
-grid_search_params = get_all_grid_search_params()
+    from __init__ import dash_app, app, cache
 
 
-def get_sliders() -> html.P:
+def create_slider(user, grid_search, param, values):
     """
-    Return a div of hidden divs with slider text above the slider.
+    Return a slider
+
+    :param user: Selected user
+    :param grid_search: Selected grid search
+    :param param: Selected parameter
+    :param values: Parameter values
+    :return: `dcc.Slider`
     """
-    sliders = []
-    for grid_search, param_dict in grid_search_params.items():
-        for param, values in param_dict.items():
-            prefix = grid_search + param
-            s = html.Div([
-                html.P(children=[param], id=prefix + '-slider-state'),
-                dcc.Slider(
-                    id=prefix + '-slider',
-                    min=1,
-                    max=len(values),
-                    value=1,
-                    step=1,
-                    included=False,
-                    marks={n + 1: v for n, v in enumerate(values)}
-                ),
-            ],
-                style={'display': 'none'},
-                id=prefix + '-slider-div',
-            )
-            sliders.append(s)
-    return html.P(children=sliders, id='grid-search-sliders')
+    s = html.Div([
+        html.P(children=[param], id=dict(user=user, grid_search=grid_search, param=param, type='grid-slider-state')),
+        dcc.Slider(
+            id=dict(user=user, grid_search=grid_search, param=param, type='grid-slider'),
+            min=1,
+            max=len(values),
+            value=1,
+            step=1,
+            included=False,
+            marks={n + 1: v for n, v in enumerate(values)}
+        ),
+    ],
+        style={'display': 'none'},
+        id=dict(user=user, grid_search=grid_search, param=param, type='grid-slider-div'),
+    )
+    return s
 
 
 invisible_grid_search_dropdown_div = html.Div(children=[
@@ -65,6 +67,19 @@ dash_app.layout = html.Div(
     [
         # empty Div to trigger javascript file for graph resizing
         html.Div(id='output-clientside'),
+
+        # Storage
+        dcc.Store(id='grid-searches-store', storage_type='session'),
+        dcc.Store(id='grid-search-params-store', storage_type='session'),
+        dcc.Store(id='slider-inputs-store', storage_type='session'),
+        dcc.Store(id='slider-marks-store', storage_type='session'),
+
+        # Intervals
+        dcc.Interval(id='user-monitor', interval=INTERVAL, n_intervals=0),
+        dcc.Interval(id='experiments-monitor', interval=INTERVAL, n_intervals=0),
+        dcc.Interval(id='grid-search-monitor', interval=INTERVAL, n_intervals=0),
+        # todo: dynamically update plot using experiment-history-monitor
+        dcc.Interval(id='experiment-history-monitor', interval=INTERVAL, n_intervals=0),
 
         # Header
         html.Div(
@@ -89,6 +104,20 @@ dash_app.layout = html.Div(
             style={"margin-bottom": "25px"},
         ),
 
+        # User selection
+        html.Div(
+            html.P([
+                "Select user:",
+                dcc.Dropdown(
+                    id='user-selector',
+                    options=get_users_for_dropdown(),
+                    multi=False
+                )
+            ],
+                id='user-selector-p'
+            )
+        ),
+
         # Reward and steps
         html.Div(
             [
@@ -96,10 +125,11 @@ dash_app.layout = html.Div(
                     [
                         html.P(
                             [
-                                "Select experiments:",
+                                "Experiments:",
                                 dcc.Dropdown(
                                     id='experiment-selector',
-                                    options=get_experiments(),
+                                    options=[dict(label='', value='')],
+                                    placeholder='select a user first',
                                     multi=True
                                 ),
                                 html.Br(),
@@ -158,12 +188,12 @@ dash_app.layout = html.Div(
                                 "Select grid search:",
                                 dcc.Dropdown(
                                     id='grid-search-selector',
-                                    options=grid_searches,
+                                    options=[dict(label='select a user', value='')],
                                     multi=False
                                 ),
                                 invisible_grid_search_dropdown_div,
                                 html.Br(),
-                                get_sliders()
+                                html.P(children=[], id='grid-search-sliders')
                             ]
                         ),
                     ],
@@ -186,73 +216,110 @@ dash_app.layout = html.Div(
 )
 
 
+@dash_app.callback(Output('user-selector', 'options'),
+                   [Input('user-monitor', 'n_intervals')], )
+def monitor_experiments_list(n_intervals):
+    """
+    Monitors the root directory for new users.
+
+    :param n_intervals: the number of times the interval timer has elapsed
+    """
+    return monitor_memoized(get_users_list, get_users_for_dropdown)
+
+
+def monitor_memoized(memoized: Callable, f: Callable, *args):
+    """
+    Monitor memoized function `memoized` for changes with arguments `*args`
+
+    :param memoized: memoized function whose output is monitored
+    :param f: another memoized function whose output is returns. Called with `*args`.
+    :returns: `f(*args)`
+    """
+    past = memoized(*args)
+    cache.delete_memoized(memoized, *args)
+    if past == memoized(*args):
+        raise PreventUpdate
+    else:
+        cache.delete_memoized(f, *args)
+        return f(*args)
+
+
+@dash_app.callback(Output('grid-search-store', 'data'),
+                   [Input('user-selector', 'value'), Input('grid-search-monitor', 'n_intervals')], )
+def update_grid_search_store(user, n_intervals):
+    trigger_id = dash.callback_context.triggered[0]['prop_id'].split('.')[0]
+    if trigger_id == 'user-selector':
+        return get_grid_searches_for_dropdown(user)
+    elif trigger_id == 'grid-search-monitor':
+        return monitor_memoized(get_grid_search_list, get_grid_searches_for_dropdown, user)
+    else:
+        raise ValueError(f"Unexpected trigger id {trigger_id}")
+
+
+@dash_app.callback(Output('grid-search-selector', 'options'),
+                   [Input('grid-search-store', 'modified_timestamp')],
+                   [State('grid-search-store', 'data')])
+def update_grid_search_selector(ts, data):
+    if ts is None:
+        raise PreventUpdate
+    return data
+
+
+@dash_app.callback([Output('experiment-selector', 'options'), Output('experiment-selector', 'placeholder')],
+                   [Input('experiments-monitor', 'n_intervals'), Input('user-selector', 'value')],
+                   [State('experiment-selector', 'placeholder')])
+def update_experiment_selector(n_intervals, user, placeholder):
+    trigger_id = dash.callback_context.triggered[0]['prop_id'].split('.')[0]
+    if trigger_id == 'user-selector':
+        return get_experiments_for_dropdown(user), placeholder
+    elif trigger_id == 'experiments-monitor':
+        return monitor_memoized(get_experiments_list, get_experiments_for_dropdown, user), "Select Experiments"
+    else:
+        raise ValueError(f"Unexpected trigger id {trigger_id}")
+
+
 @dash_app.callback(Output('grid-search-sliders', 'children'),
-                   [Input('grid-search-selector', 'value'),
-                    Input('grid-search-params-selector', 'value')],
-                   [State('grid-search-sliders', 'children')],
+                   [Input('grid-search-params-selector', 'value')],
+                   [State('user-selector', 'value'),
+                    State('grid-search-selector', 'value'),
+                    State('grid-search-sliders', 'children')],
                    prevent_initial_call=False)
-def show_grid_search_sliders(grid_search: str, params: List[str], state: List):
+def make_grid_search_sliders(params: List[str], user: str, grid_search: str, sliders: List,):
     """
     Show the sliders that were selected using the multiple dropdown. Hide the others.
 
+    :param user: the selected user
     :param grid_search: name of the grid search
     :param params: list of parameters
-    :param state: children of the grid-search-sliders Div
+    :param sliders: children of the grid-search-sliders Div
     :return: updated state
     """
     ids = []
-    for gs, param_dict in grid_search_params.items():
-        for p in param_dict.keys():
-            ids.append(gs + p + '-slider-div')
+    param_dict = get_all_grid_search_params(user)[grid_search]
 
-    if params:
-        selected_ids = {grid_search + p + '-slider-div' for p in params}
-    else:
-        selected_ids = set()
+    new_sliders_set = {create_slider(user, grid_search, k, v) for k, v in param_dict if k in params}
+    sliders_set = set(sliders).union(new_sliders_set)
 
-    for n, i in enumerate(ids):
-        if grid_search and (i not in selected_ids):
-            state[n]['props']['style'] = None
-        else:
-            state[n]['props']['style'] = dict(display='none')
-    return state
+    return sorted(list(sliders_set), key=None)  # todo: sort by slider id
 
 
-def assign_slider_text_update_callback(grid_search: str, param: str) -> None:
-    """
-    Register a callback on the text above categorical sliders. It will then update that text according to the current
-    selection.
+@dash_app.callback(Output(dict(type='grid-slider-state', user=ALL, grid_search=ALL, param=ALL), 'children'),
+                   [Input(dict(type='grid-slider', user=ALL, grid_search=ALL, param=ALL), 'value')],
+                   [State(dict(type='grid-slider', user=ALL, grid_search=ALL, param=ALL), 'marks')])
+def slider_text_update(sliders: List[int], slider_lookup: List[Dict]) -> Tuple[List[str]]:
+    result = []
+    for slider_value, sl in zip(sliders, slider_lookup):
+        result.append([f"param: {sl[slider_value]}"])
 
-    :param grid_search: the name of the grid search
-    :param param: the name of the parameter the slider adjusts
-    """
-    prefix = grid_search + param
-
-    def slider_text_update(value: int, marks):
-        value = marks[str(value)]
-        return [f"{param}: {value}"]
-
-    dash_app.callback(output=Output(prefix + '-slider-state', 'children'),
-                      inputs=[Input(prefix + '-slider', 'value')],
-                      state=[State(prefix + '-slider', 'marks')],
-                      prevent_initial_call=False)(slider_text_update)
-
-
-# Construct slider inputs and assign callbacks to slider labels
-slider_inputs = []
-slider_marks = []
-for gs, param_dict in grid_search_params.items():
-    for p in param_dict.keys():
-        assign_slider_text_update_callback(gs, p)
-        slider_inputs.append(Input(gs + p + '-slider', 'value'))
-        slider_marks.append(State(gs + p + '-slider', 'marks'))
+    return tuple(result)
 
 
 @dash_app.callback(Output('grid-search-params-selector-div', 'children'),
-                   [Input('grid-search-selector', 'value')], )
-def make_grid_search_param_selector(grid_search: str) -> List[dcc.Dropdown]:
+                   [Input('user-selector', 'value'),
+                    Input('grid-search-selector', 'value')], )
+def make_grid_search_param_selector(user: str, grid_search: str) -> List[dcc.Dropdown]:
     if grid_search:
-        options = grid_search_params[grid_search].keys()
+        options = get_all_grid_search_params(user)[grid_search].keys()
         options = [dict(label=o, value=o) for o in options]
         return [dcc.Dropdown(
             id='grid-search-params-selector',
@@ -312,16 +379,26 @@ def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figu
 
 @dash_app.callback(
     Output('grid-search-plot', 'figure'),
-    [Input('grid-search-selector', 'value'),
-     Input('grid-search-params-selector', 'value')] + slider_inputs,
-    slider_marks + [State('grid-search-sliders', 'children')]
+    [Input('user-selector', 'value'),
+     Input('grid-search-selector', 'value'),
+     Input('grid-search-params-selector', 'value'),
+     Input('slider-inputs-store', 'data')],
+    [State('slider-state-store', 'data'),
+     State('grid-search-sliders', 'children')]
 )
-def make_grid_search_plot(grid_search, axis_params, *args):
-    args = list(args)
-    state = args.pop()
-    slider_values = args[:len(args) // 2]
-    slider_value_lookup = args[len(args) // 2:]
+def make_grid_search_plot(user, grid_search, axis_params, slider_values, slider_value_lookup, state):
+    """
+    Return the grid search plot.
 
+    :param user: The selected user
+    :param grid_search: The selected grid search
+    :param axis_params: If 1 selected, this is the x-axis of the scatter plot. If 2 selected, these are the x and y
+                        axes of the surface plot.
+    :param slider_values: values of the sliders
+    :param slider_value_lookup: slider markers dict providing a lookup from slider value to real value
+    :param state: used to determine which sliders are visible and therefore, active
+    :return:
+    """
     slider_params = dict()
     for v, lookup, s in zip(slider_values, slider_value_lookup, state):
         if s['props']['style'] is None:
@@ -335,9 +412,10 @@ def make_grid_search_plot(grid_search, axis_params, *args):
         if not slider_params:
             return get_empty_sunburst("Select a grid search")
         else:
-            return get_empty_sunburst(get_grid_search_results_value(grid_search, **slider_params))
+            return get_empty_sunburst(get_grid_search_results_value(user, grid_search, **slider_params))
 
     # Create actual plot
+    param_dict = next(get_all_grid_search_params(user).values())
     if len(axis_params) == 1:  # single axis plot
         p = axis_params[0]
         x = [float(v) for v in param_dict[p]]
@@ -346,7 +424,7 @@ def make_grid_search_plot(grid_search, axis_params, *args):
         for v in param_dict[p]:
             slider_params[p] = v
             try:
-                y.append(float(get_grid_search_results_value(grid_search, **slider_params)))
+                y.append(float(get_grid_search_results_value(user, grid_search, **slider_params)))
             except KeyError:
                 y.append(None)
 
@@ -364,7 +442,7 @@ def make_grid_search_plot(grid_search, axis_params, *args):
             for j, vy in enumerate(param_dict[axis_params[1]]):
                 slider_params[axis_params[1]] = vy
                 try:
-                    reward[j, i] = (float(get_grid_search_results_value(grid_search, **slider_params)))
+                    reward[j, i] = (float(get_grid_search_results_value(user, grid_search, **slider_params)))
                 except KeyError:
                     reward[j, i] = None
         fig = go.Figure()
@@ -400,12 +478,11 @@ def get_step_plot(experiments: List[str], moving_avg_len) -> go.Figure:
 
 if __name__ == '__main__':
     # noinspection PyTypeChecker
-    app.run(host='127.0.0.1', debug=True, port=8050)
-    """
-    dash_app.run_server(debug=False,
-                   dev_tools_hot_reload=False,
-                   host=os.getenv("HOST", "127.0.0.1"),
-                   # host=os.getenv("HOST", "192.168.1.10"),
-                   port=os.getenv("PORT", "8050"),
-                   )
-    """
+    # app.run(host='127.0.0.1', debug=True, port=8050)
+
+    dash_app.run_server(debug=True,
+                        dev_tools_hot_reload=False,
+                        host=os.getenv("HOST", "127.0.0.1"),
+                        # host=os.getenv("HOST", "192.168.1.10"),
+                        port=os.getenv("PORT", "8050"),
+                        )

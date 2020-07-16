@@ -4,23 +4,21 @@ import re
 from typing import List, Tuple, Dict
 
 import pandas as pd
+
 try:
     from ..dashboard import cache
 except ImportError:
     from __init__ import cache
 
-__all__ = ['get_grid_searches', 'get_experiments', 'get_rewards_history_df', 'get_steps_history_df',
-           'get_parameters_df', 'get_grid_search_params', 'get_grid_search_experiments', 'get_all_grid_search_params',
-           'get_grid_search_results_value']
+EXP_DIR = 'experiments'
+__all__ = ['get_grid_searches_for_dropdown', 'get_experiments_for_dropdown', 'get_experiments_list',
+           'get_rewards_history_df', 'get_users_list',
+           'get_steps_history_df', 'get_parameters_df', 'get_grid_search_params', 'get_grid_search_experiments',
+           'get_all_grid_search_params', 'get_grid_search_results_value', 'get_users_for_dropdown',
+           'get_grid_search_list']
 
 # find the root dir
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-if not os.path.isdir(os.path.join(root_dir, 'experiments')):
-    root_dir = os.path.dirname(root_dir)
-    if not os.path.isdir(os.path.join(root_dir, 'experiments')):
-        root_dir = '/data'
-        exp_dir = os.path.join(root_dir, 'experiments')
-        assert os.path.isdir(exp_dir), f"cannot find path {exp_dir}"
+root_dir = '/data'
 
 
 @cache.memoize()
@@ -40,20 +38,18 @@ def load_history(experiment_dir: str) -> List[Tuple[float, int]]:
 
 
 @cache.memoize()
-def get_experiments_list() -> List[str]:
+def get_experiments_list(user) -> List[str]:
     """
     Get all experiments in the experiments directory
 
     :return: List of experiments
     """
-    experiments_root = os.path.join(root_dir, 'experiments')
-    experiments = os.listdir(experiments_root)
-    return sorted(experiments)
+    return sorted(_get_directory_listing(EXP_DIR, user))
 
 
 @cache.memoize()
-def get_grid_search_results_value(search: str, **kwargs) -> str:
-    experiments, series = get_grid_search_results_series(search)
+def get_grid_search_results_value(user, search: str, **kwargs) -> str:
+    experiments, series = get_grid_search_results_series(user, search)
 
     params = [i.split('.')[0] for i in experiments[0].split('-')]
     param_assignment = dict()
@@ -64,8 +60,8 @@ def get_grid_search_results_value(search: str, **kwargs) -> str:
 
 
 @cache.memoize()
-def get_grid_search_results_series(search) -> Tuple[List, pd.Series]:
-    experiments = get_grid_search_experiments_list(search)
+def get_grid_search_results_series(user, search) -> Tuple[List, pd.Series]:
+    experiments = get_grid_search_experiments_list(user, search)
     df = _get_history_df(experiments, os.path.join('grid-search', search), 0)
     df = get_moving_average(df, 100)
     series = df.iloc[-1]
@@ -81,37 +77,70 @@ def get_grid_search_results_key(param_assignment: Dict):
 
 
 @cache.memoize()
-def get_grid_search_experiments_list(search: str) -> List[str]:
+def get_grid_search_experiments_list(user, search: str) -> List[str]:
     """
     Get all experiments in the search directory
 
     :return: List of experiments
     """
-    experiments_root = os.path.join(root_dir, 'grid-search', search)
+    experiments_root = os.path.join(root_dir, user, 'pong-underwater-rl', 'grid-search', search)
     experiments = os.listdir(experiments_root)
     return sorted(experiments)
 
 
 @cache.memoize()
-def get_experiments() -> List[Dict]:
+def get_grid_search_list(user: str) -> List[str]:
+    """
+    Get all experiments in the search directory
+
+    :return: List of experiments
+    """
+    experiments_root = os.path.join(root_dir, 'pong-underwater-rl', 'grid-search')
+    experiments = os.listdir(experiments_root)
+    return sorted(experiments)
+
+
+@cache.memoize()
+def get_experiments_for_dropdown(user) -> List[Dict]:
     """
     Get all experiments in the experiments directory formatted for use in a plotly dropdown
 
     :return: List of experiments
     """
-    return _get_directory_listing_for_dash_dropdown('experiments')
+    return dash_dropdown_list_from_iterable(_get_directory_listing(EXP_DIR, user))
 
 
 @cache.memoize()
-def get_all_grid_search_params() -> Dict[str, Dict[str, List]]:
+def get_users_for_dropdown() -> List[Dict]:
+    """
+    Get all experiments in the experiments directory formatted for use in a plotly dropdown
+
+    :return: List of users
+    """
+    return dash_dropdown_list_from_iterable(os.listdir('/data'))
+
+
+@cache.memoize()
+def get_users_list():
+    """
+    Get all users in the root directory
+
+    :return: List of users
+    """
+    users = os.listdir(root_dir)
+    return sorted(users)
+
+
+@cache.memoize()
+def get_all_grid_search_params(user) -> Dict[str, Dict[str, List]]:
     """
 
     :return: e.g. {'experiment1': {'param1': [1, 2, 3], 'param2': [2, 3]},
                    'experiment2': {'param1': [2, 3, 4], 'param3': [1]}
     """
     result = dict()
-    for search in get_grid_searches():
-        experiments = get_grid_search_experiments_list(search['label'])
+    for search in get_grid_searches_for_dropdown(user):
+        experiments = get_grid_search_experiments_list(user, search['label'])
         result[search['label']] = get_grid_search_params(experiments)
     return result
 
@@ -135,38 +164,35 @@ def get_grid_search_params(experiments) -> Dict[str, List]:
 
 
 @cache.memoize()
-def get_grid_searches() -> List[Dict]:
+def get_grid_searches_for_dropdown(user) -> List[Dict]:
     """
     Get all searches in the grid-searches directory formatted for use in a plotly dropdown
 
     :return: List of grid searches
     """
-    return _get_directory_listing_for_dash_dropdown('grid-search')
+    return dash_dropdown_list_from_iterable(_get_directory_listing('grid-search', user))
 
 
 @cache.memoize()
-def get_grid_search_experiments(grid_search: str) -> List[str]:
+def get_grid_search_experiments(grid_search: str, user) -> List[str]:
     """
     List of all grid search experiments in a particular search
 
     :param grid_search: directory name
+    :param user: matching the path /data/<user>
     :return: list of experiments
     """
-    return _get_directory_listing(os.path.join('grid-search', grid_search))
+    return _get_directory_listing(os.path.join('grid-search', grid_search), user)
+
+
+def dash_dropdown_list_from_iterable(iterable):
+    value = [{'label': v, 'value': v} for v in iterable]
+    return sorted(value, key=lambda x: x['label'])
 
 
 @cache.memoize()
-def _get_directory_listing_for_dash_dropdown(directory) -> List[Dict]:
-    """
-    Get all sub-directories in `directory` for use in a plotly dropdown
-    """
-    experiments = [{'label': e, 'value': e} for e in _get_directory_listing(directory)]
-    return sorted(experiments, key=lambda x: x['label'])
-
-
-@cache.memoize()
-def _get_directory_listing(directory) -> List[str]:
-    path = os.path.join(root_dir, directory)
+def _get_directory_listing(directory, user) -> List[str]:
+    path = os.path.join(root_dir, user, 'pong-underwater-rl', directory)
     return os.listdir(path)
 
 
@@ -187,7 +213,7 @@ def get_multi_index_history_df(experiments: List[str]) -> pd.DataFrame:
     """
     hist_dict = {}
     for e in experiments:
-        history = load_history(os.path.join(root_dir, 'experiments', e))
+        history = load_history(os.path.join(root_dir, 'pong-underwater-rl', EXP_DIR, e))
         rewards = [v[0] for v in history]
         steps = [v[1] for v in history]
         hist_dict[e] = {'reward': rewards, 'step': steps}
@@ -205,7 +231,7 @@ def get_multi_index_history_df(experiments: List[str]) -> pd.DataFrame:
 def _get_history_df(experiments, source, selector: int):
     df = pd.DataFrame()
     for e in experiments:
-        history = load_history(os.path.join(root_dir, source, e))
+        history = load_history(os.path.join(root_dir, 'pong-underwater-rl', source, e))
         rewards = [v[selector] for v in history]
 
         temp_df = pd.DataFrame(rewards, columns=[e])
@@ -230,7 +256,7 @@ def get_rewards_history_df(experiments: List[str], moving_avg_len=1) -> pd.DataF
     :param experiments: List of experiments.
     :return: `pd.DataFrame`
     """
-    df = _get_history_df(experiments, 'experiments', 0)
+    df = _get_history_df(experiments, EXP_DIR, 0)
     return get_moving_average(df, moving_avg_len)
 
 
@@ -242,7 +268,7 @@ def get_steps_history_df(experiments: List[str], moving_avg_len=1) -> pd.DataFra
     :param experiments: List of experiments.
     :return: `pd.DataFrame`
     """
-    df = _get_history_df(experiments, 'experiments', 1)
+    df = _get_history_df(experiments, EXP_DIR, 1)
     return get_moving_average(df, moving_avg_len)
 
 
@@ -251,7 +277,7 @@ def get_parameters_df(experiments: List[str]):
     df = pd.DataFrame()
     for e in experiments:
         params_dict = dict(experiment=e)
-        with open(os.path.join(root_dir, 'experiments', e, 'output.log')) as f:
+        with open(os.path.join(root_dir, 'pong-underwater-rl', EXP_DIR, e, 'output.log')) as f:
             params_dict.update(_parse_parameters(f.readline()))
         params_df = pd.DataFrame(params_dict, index=[e])
 
