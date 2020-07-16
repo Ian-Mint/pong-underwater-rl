@@ -189,7 +189,8 @@ dash_app.layout = html.Div(
                                 "Select grid search:",
                                 dcc.Dropdown(
                                     id='grid-search-selector',
-                                    options=[dict(label='select a user', value='')],
+                                    options=[dict(label='', value='')],
+                                    placeholder='select a user first',
                                     multi=False
                                 ),
                                 invisible_grid_search_dropdown_div,
@@ -263,11 +264,15 @@ def update_grid_search_store(user, n_intervals):
 
 @dash_app.callback(Output('grid-search-selector', 'options'),
                    [Input('grid-search-store', 'modified_timestamp')],
-                   [State('grid-search-store', 'data')])
+                   [State('grid-search-store', 'data')],
+                   prevent_initial_call=True)
 def update_grid_search_selector(ts, data):
     if ts is None:
         raise PreventUpdate
-    return data
+    if data is None:
+        return [dict(label='', value='')]
+    else:
+        return data
 
 
 @dash_app.callback([Output('experiment-selector', 'options'), Output('experiment-selector', 'placeholder')],
@@ -329,6 +334,9 @@ def slider_text_update(sliders: List[int], slider_lookup: List[Dict]) -> Tuple[L
                    [Input('user-selector', 'value'),
                     Input('grid-search-selector', 'value')], )
 def make_grid_search_param_selector(user: str, grid_search: str) -> List[dcc.Dropdown]:
+    if user is None:
+        raise PreventUpdate
+
     if grid_search:
         options = get_all_grid_search_params(user)[grid_search].keys()
         options = [dict(label=o, value=o) for o in options]

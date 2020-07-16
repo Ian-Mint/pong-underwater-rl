@@ -95,7 +95,7 @@ def get_grid_search_list(user: str) -> List[str]:
 
     :return: List of experiments
     """
-    experiments_root = os.path.join(root_dir, 'pong-underwater-rl', 'grid-search')
+    experiments_root = os.path.join(root_dir, user, 'pong-underwater-rl', 'grid-search')
     experiments = os.listdir(experiments_root)
     return sorted(experiments)
 
