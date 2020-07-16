@@ -62,7 +62,7 @@ def get_grid_search_results_value(user, search: str, **kwargs) -> str:
 @cache.memoize()
 def get_grid_search_results_series(user, search) -> Tuple[List, pd.Series]:
     experiments = get_grid_search_experiments_list(user, search)
-    df = _get_history_df(experiments, os.path.join('grid-search', search), 0)
+    df = _get_history_df(user, experiments, os.path.join('grid-search', search), 0)
     df = get_moving_average(df, 100)
     series = df.iloc[-1]
     return experiments, series
@@ -228,10 +228,10 @@ def get_multi_index_history_df(experiments: List[str]) -> pd.DataFrame:
 
 
 @cache.memoize()
-def _get_history_df(experiments, source, selector: int):
+def _get_history_df(user, experiments, source, selector: int):
     df = pd.DataFrame()
     for e in experiments:
-        history = load_history(os.path.join(root_dir, 'pong-underwater-rl', source, e))
+        history = load_history(os.path.join(root_dir, user, 'pong-underwater-rl', source, e))
         rewards = [v[selector] for v in history]
 
         temp_df = pd.DataFrame(rewards, columns=[e])
@@ -248,15 +248,16 @@ def get_moving_average(df: pd.DataFrame, moving_avg_len) -> pd.DataFrame:
     return df
 
 
-def get_rewards_history_df(experiments: List[str], moving_avg_len=1) -> pd.DataFrame:
+def get_rewards_history_df(user: str, experiments: List[str], moving_avg_len=1) -> pd.DataFrame:
     """
     Get a dataframe of the reward after each episode for each experiment.
 
+    :param user: The selected user
     :param moving_avg_len:
     :param experiments: List of experiments.
     :return: `pd.DataFrame`
     """
-    df = _get_history_df(experiments, EXP_DIR, 0)
+    df = _get_history_df(user, experiments, EXP_DIR, 0)
     return get_moving_average(df, moving_avg_len)
 
 
@@ -268,7 +269,7 @@ def get_steps_history_df(experiments: List[str], moving_avg_len=1) -> pd.DataFra
     :param experiments: List of experiments.
     :return: `pd.DataFrame`
     """
-    df = _get_history_df(experiments, EXP_DIR, 1)
+    df = _get_history_df(user, experiments, EXP_DIR, 1)
     return get_moving_average(df, moving_avg_len)
 
 
