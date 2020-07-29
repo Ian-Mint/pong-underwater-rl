@@ -11,7 +11,7 @@ import random
 import shutil
 import sys
 import threading
-from typing import Union
+from typing import Union, List
 import time
 from collections import namedtuple, deque
 from copy import deepcopy
@@ -65,9 +65,12 @@ class Learner:
 
         self.loss = None
 
-        self.proc = mp.Process(target=self.main_worker)
+        self.proc = mp.Process(target=self.main_worker, name="Learner")
 
     def __del__(self):
+        self.terminate()
+
+    def terminate(self):
         self.proc.terminate()
         self.proc.join()
 
@@ -250,12 +253,15 @@ class Actor:
         self.epoch = 0
         self.steps = 0
 
-        self.proc = mp.Process(target=self.main_worker)
+        self.proc = mp.Process(target=self.main_worker, name=f"Actor-{self.id}")
 
     def __del__(self):
         if self.proc.pid is not None:
             self.proc.terminate()
             self.proc.join()
+
+    def join(self):
+        self.proc.join()
 
     def start(self):
         self.proc.start()
@@ -268,17 +274,18 @@ class Actor:
 
     def update_params(self):
         self.event.set()
-        wait_event_not_set(self.event, timeout=1)
+        wait_event_not_set(self.event, timeout=None)
         self.policy.load_state_dict(self.namespace.state_dict)
 
     def run_episode(self):
         obs = self.env.reset()
         state = get_state(obs)  # torch.Size([1, 4, 84, 84])
+        assert state.size() == (1, 4, 84, 84)
         total_reward = 0.0
         for _ in count():
+            done, total_reward, state = self.run_step(state, total_reward)
             if self.steps % ACTOR_UPDATE_INTERVAL == 0:
                 self.update_params()
-            done, total_reward, state = self.run_step(state, total_reward)
             if done:
                 break
         self.epoch += 1
@@ -377,17 +384,53 @@ def memory_encoder(memory_queue, replay_in_queue):
     :param memory_queue:
     """
     while True:
-        if memory_queue.not_empty:
+        if not memory_queue.empty():
             actor_id, step_number, state, action, next_state, reward = memory_queue.get()
+            assert isinstance(state, torch.Tensor)
+            assert isinstance(next_state, torch.Tensor)
+            assert isinstance(action, int)
+            assert isinstance(reward, (int, float))
 
-            png_state = io.BytesIO()
-            png_next_state = io.BytesIO()
+            state = state.squeeze().numpy()
+            next_state = next_state.squeeze().numpy()
 
-            Image.fromarray(state).save(png_state, format='png')
-            Image.fromarray(next_state).save(png_next_state, format='png')
+            logger.debug(type(state))
+            logger.debug(type(next_state))
+            logger.debug(state.shape)
+            logger.debug(next_state.shape)
+            logger.debug(state.dtype)
+            logger.debug(next_state.dtype)
+
+            if state.ndim == 2:
+                png_state = io.BytesIO()
+                png_next_state = io.BytesIO()
+                Image.fromarray(state).save(png_state, format='png')
+                Image.fromarray(next_state).save(png_next_state, format='png')
+            else:
+                png_state = encode_stacked_frames(state)
+                png_next_state = encode_stacked_frames(next_state)
+
             replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
         else:
             time.sleep(0.1)
+
+
+def encode_stacked_frames(state) -> List[io.BytesIO]:
+    result = []
+    for frame in state:
+        f = io.BytesIO()
+        Image.fromarray(frame).save(f, format='png')
+        result.append(f)
+    return result
+
+
+def decode_stacked_frames(png_state: List[io.BytesIO]) -> torch.Tensor:
+    transform = transforms.ToTensor()
+    result = []
+    for f in png_state:
+        frame = transform(Image.open(f))
+        result.append(frame.squeeze())
+    return torch.stack(result).unsqueeze(0).to(DEVICE)
 
 
 def memory_decoder(sample_queue, replay_out_queue):
@@ -396,14 +439,18 @@ def memory_decoder(sample_queue, replay_out_queue):
     """
     transform = transforms.ToTensor()
     while True:
-        if replay_out_queue.not_empty:
+        if not replay_out_queue.empty():
             batch = replay_out_queue.get()
 
             decoded_batch = []
             for transition in batch:
                 actor_id, step_number, png_state, action, png_next_state, reward = transition
-                state = transform(Image.open(png_state)).to(DEVICE)
-                next_state = transform(Image.open(png_next_state)).to(DEVICE)
+                if isinstance(png_state, list):
+                    state = decode_stacked_frames(png_state)
+                    next_state = decode_stacked_frames(png_next_state)
+                else:
+                    state = transform(Image.open(png_state)).to(DEVICE)
+                    next_state = transform(Image.open(png_next_state)).to(DEVICE)
                 decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
             sample_queue.put(decoded_batch, timeout=1)
         else:
@@ -434,14 +481,14 @@ class Replay:
         self.mode = mode
         self.memory = deque(maxlen=MEMORY_SIZE)
 
-        self.proc = mp.Process(target=self.main_worker)
-        self.push_thread = threading.Thread(target=self.push_worker, daemon=True)
-        self.sample_thread = threading.Thread(target=self.sample_worker, daemon=True)
-
-        self.push_task = None
-        self.sample_task = None
+        self.proc = mp.Process(target=self.main_worker, name="Replay")
+        self.push_thread = threading.Thread(target=self.push_worker, daemon=True, name="Push")
+        self.sample_thread = threading.Thread(target=self.sample_worker, daemon=True, name="Sample")
 
     def __del__(self):
+        self.terminate()
+
+    def terminate(self):
         self.proc.terminate()
         self.proc.join()
 
@@ -449,8 +496,8 @@ class Replay:
         self.proc.start()
 
     def main_worker(self):
-        self.push_thread.run()
-        self.sample_thread.run()
+        self.push_thread.start()
+        self.sample_thread.start()
 
     def push_worker(self):
         while True:
@@ -695,34 +742,47 @@ def main():
     logger.info(get_args_status_string(parser, args))
     logger.info(f'Device: {DEVICE}')
 
+    # Get shared objects
     model = initialize_model()
+    manager = mp.Manager()
     memory_queue, namespace, param_update_request, replay_in_queue, replay_out_queue, sample_queue = \
-        get_managed_objects()
+        get_managed_objects(manager)
 
-    # Launch subprocesses
-    actor = Actor(model, args.episodes, args.render_mode, param_update_request, namespace)
-    png_encoder_proc = mp.Process(target=memory_encoder, args=(memory_queue, replay_in_queue))
-    png_decoder_proc = mp.Process(target=memory_decoder, args=(sample_queue, replay_out_queue))
+    # Create subprocesses
+    actor = Actor(model=model, n_episodes=args.episodes, render_mode=args.render, memory_queue=memory_queue,
+                  event=param_update_request, namespace=namespace)
+    png_encoder_proc = mp.Process(target=memory_encoder, args=(memory_queue, replay_in_queue), name='PNG Encoder')
+    png_decoder_proc = mp.Process(target=memory_decoder, args=(sample_queue, replay_out_queue), name='PNG Decoder')
     replay = Replay(replay_in_queue, replay_out_queue)
     learner = Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, event=param_update_request,
                       namespace=namespace)
 
+    # Start subprocesses
     actor.start()
     replay.start()
     learner.start()
     png_encoder_proc.start()
     png_decoder_proc.start()
 
+    # Join subprocess. actor is the only one that is not infinite.
+    actor.join()
+    logger.info("All actors finished")
+    png_encoder_proc.terminate()
+    png_decoder_proc.terminate()
+    del replay
+    del learner
+    png_encoder_proc.join()
+    png_decoder_proc.join()
 
-def get_managed_objects():
-    with mp.Manager() as manager:
-        memory_queue = manager.Queue(maxsize=1000)
-        replay_in_queue = manager.Queue(maxsize=1000)
-        replay_out_queue = manager.Queue(maxsize=10)
-        sample_queue = manager.Queue(maxsize=10)
 
-        param_update_request = manager.Event()
-        namespace = manager.Namespace()
+def get_managed_objects(manager: mp.Manager):
+    memory_queue = manager.Queue(maxsize=1000)
+    replay_in_queue = manager.Queue(maxsize=1000)
+    replay_out_queue = manager.Queue(maxsize=10)
+    sample_queue = manager.Queue(maxsize=10)
+
+    param_update_request = manager.Event()
+    namespace = manager.Namespace()
     return memory_queue, namespace, param_update_request, replay_in_queue, replay_out_queue, sample_queue
 
 

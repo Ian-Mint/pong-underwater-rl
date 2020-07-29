@@ -1,11 +1,17 @@
+from functools import reduce
 import importlib
 import math
+from matplotlib import cm
+import multiprocessing as mp
+import numpy as np
+from operator import mul
 import os
+from PIL import Image
 import shutil
 import sys
+import time
 import unittest
 import unittest.mock as mock
-from copy import deepcopy
 
 import torch
 import torch.nn as nn
@@ -109,6 +115,51 @@ class TestEnv(unittest.TestCase):
         self.assertEqual((1, 4, 84, 84), state.size())
 
 
+class TestMemoryEncoder(unittest.TestCase):
+    def setUp(self) -> None:
+        set_main_args()
+        main.create_storage_dir()
+        main.logger = main.get_logger(main.args.store_dir)
+
+        self.manager = mp.Manager()
+        self.memory_queue, _, _, _, self.replay_out_queue, _ = main.get_managed_objects(self.manager)
+
+        self.proc = mp.Process(target=main.memory_encoder, args=(self.memory_queue, self.replay_out_queue))
+
+    def set_state(self, shape: tuple):
+        x = np.linspace(0, 255, reduce(mul, shape)).reshape(shape).astype(np.uint8)
+        self.state = torch.from_numpy(x)
+        self.memory_queue.put(main.Transition(0, 0, self.state, 0, self.state, 0))
+
+    def tearDown(self) -> None:
+        self.proc.terminate()
+        self.proc.join()
+
+        shutil.rmtree(main.args.store_dir)
+
+    def test_encoded_single_frame_image_is_png_format(self):
+        self.set_state((1, 1, 100, 100))
+        self.proc.start()
+        _, _, f, _, _, _ = self.replay_out_queue.get()
+        img = Image.open(f)
+        self.assertEqual('PNG', img.format)
+
+    def test_encoded_four_frame_image_is_png_format(self):
+        self.set_state((1, 4, 100, 100))
+        self.proc.start()
+        _, _, f, _, _, _ = self.replay_out_queue.get()
+        img = Image.open(f[0])
+        self.assertEqual('PNG', img.format)
+
+    def test_encoded_four_frame_image_is_decoded_to_a_torch_tensor(self):
+        shape = (1, 4, 100, 100)
+        self.set_state(shape)
+        self.proc.start()
+        _, _, f, _, _, _ = self.replay_out_queue.get()
+        tensor = main.decode_stacked_frames(f)
+        self.assertEqual(shape, tensor.size())
+
+
 class TestModelInitialization(unittest.TestCase):
     def setUp(self) -> None:
         set_main_args()
@@ -139,9 +190,10 @@ class TestActor(unittest.TestCase):
         set_main_args()
         set_main_constants()
         main.ARCHITECTURE = 'dqn'
-        
+
         model = main.initialize_model()
-        memory_queue, namespace, param_update_request, _, _, _ = main.get_managed_objects()
+        self.manager = mp.Manager()
+        memory_queue, namespace, param_update_request, _, _, _ = main.get_managed_objects(self.manager)
         self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
                                 event=param_update_request, namespace=namespace)
 
@@ -198,133 +250,48 @@ class TestActor(unittest.TestCase):
         self.assert_valid_action(action)
 
 
-class TestTrainFunctions(unittest.TestCase):
+class TestReplay(unittest.TestCase):
     def setUp(self) -> None:
         set_main_args()
         set_main_constants()
-        main.steps_done = 0
-        main.epoch = 0
 
-        self.initialize()
+        self.manager = mp.Manager()
+        _, _, _, replay_in_queue, replay_out_queue, _ = main.get_managed_objects(self.manager)
+        self.replay = main.Replay(replay_in_queue, replay_out_queue)
 
-    def initialize(self, architecture='dqn'):
-        make_env(architecture)
-        obs = main.env.reset()
-        self.state = main.get_state(obs)
-        initialize_models(architecture)
-
-    def test_models_equal_after_update_target_net_if_steps_done_is_multiple_of_target_update(self):
-        randomize_weights(main.policy_net)
-        main.update_target_net()
-        self.assertTrue(*utils.models_are_equal(main.policy_net, main.target_net))
-
-    def test_models_unequal_after_update_target_net_if_steps_done_is_not_multiple_of_target_update(self):
-        main.steps_done = 1
-        main.TARGET_UPDATE = 2
-        randomize_weights(main.policy_net)
-        main.update_target_net()
-        self.assertFalse(utils.models_are_equal(main.policy_net, main.target_net)[0], "models are identical")
-
-
-class TestMemory(unittest.TestCase):
-    def setUp(self) -> None:
-        set_main_args()
-        set_main_constants()
-        main.steps_done = 0
-        main.epoch = 0
-
-        self.initialize()
-
-    def initialize(self, architecture='dqn'):
-        make_env(architecture)
-        obs = main.env.reset()
-        self.state = main.get_state(obs)
-        initialize_models(architecture)
-
-    def store_memory(self):
-        self.episode = 0
-        self.transition = memory.Transition(self.state, torch.tensor([[0]]), torch.tensor([0.]),
-                                            torch.zeros_like(self.state))
-        main.memory_store(self.episode, *self.transition)
-
-    def test_lstm_has_episodic_memory(self):
-        main.ARCHITECTURE = 'lstm'
-        self.assertIsInstance(main.initialize_replay_memory(), memory.EpisodicMemory)
-
-    def test_dqn_has_default_memory(self):
-        main.ARCHITECTURE = 'dqn'
-        self.assertIsInstance(main.initialize_replay_memory(), memory.ReplayMemory)
-
-    def test_models_equal_after_update_target_net_if_steps_done_is_multiple_of_target_update(self):
-        randomize_weights(main.policy_net)
-        main.update_target_net()
-        self.assertTrue(*utils.models_are_equal(main.policy_net, main.target_net))
-
-    def test_models_unequal_after_update_target_net_if_steps_done_is_not_multiple_of_target_update(self):
-        main.steps_done = 1
-        main.TARGET_UPDATE = 2
-        randomize_weights(main.policy_net)
-        main.update_target_net()
-        self.assertFalse(utils.models_are_equal(main.policy_net, main.target_net)[0], "models are identical")
-
-    def test_default_memory_store_increments_position(self):
-        initial_memory = main.memory.position
-        self.store_memory()
-        self.assertEqual(initial_memory + 1, main.memory.position)
-
-    def test_default_memory_store_transition_is_at_top_of_stack(self):
-        self.store_memory()
-        self.assertEqual(main.memory.memory.pop(), self.transition)
-
-    def test_episodic_memory_store_transition_is_at_top_of_stack(self):
-        self.initialize('lstm')
-        self.store_memory()
-        self.assertIsInstance(main.memory, memory.EpisodicMemory)
-        self.assertEqual(main.memory.current_episode_memory.pop(), self.transition)
+    # todo: mock some queues and test multiprocessing
 
 
 def first_greater_multiple(minimum, factor):
     return (minimum // factor + 1) * factor
 
 
-class TestTrain(unittest.TestCase):
+class TestLearner(unittest.TestCase):
     def setUp(self) -> None:
+        main.ARCHITECTURE = 'dqn'
         set_main_args()
         set_main_constants()
-        main.steps_done = 0
-        main.epoch = 0
 
-        self.initialize()
+        model = main.initialize_model()
+        self.manager = mp.Manager()
+        _, namespace, param_update_request, _, _, sample_queue = main.get_managed_objects(self.manager)
+        self.learner = main.Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue,
+                                    event=param_update_request, namespace=namespace)
 
     def tearDown(self) -> None:
+        del self.learner
+        importlib.reload(main)
         if os.path.exists(main.args.store_dir):
             shutil.rmtree(main.args.store_dir)
 
-    def initialize(self, architecture='dqn'):
-        make_env(architecture)
-        obs = main.env.reset()
-        self.state = main.get_state(obs)
-        initialize_models(architecture)
-
-    def test_policy_net_is_not_updated_until_steps_greater_than_initial_memory(self):
-        initial_net = deepcopy(main.policy_net)
-        for i in range(max(main.INITIAL_MEMORY, main.BATCH_SIZE)):
-            main.train_step(1, self.state, 0)
-            self.assertTrue(*utils.models_are_equal(initial_net, main.policy_net))
-        main.train_step(1, self.state, 0)
-        self.assertFalse(utils.models_are_equal(initial_net, main.policy_net)[0])
-
-    def test_policy_net_equals_target_net_after_target_update_steps(self):
-        main.TARGET_UPDATE = 5
-        for i in range(max(first_greater_multiple(main.INITIAL_MEMORY, main.TARGET_UPDATE),
-                           first_greater_multiple(main.BATCH_SIZE, main.TARGET_UPDATE))):
-            main.train_step(1, self.state, 0)
-            if i >= max(main.INITIAL_MEMORY, main.BATCH_SIZE) and (i + 1) % main.TARGET_UPDATE != 0:
-                self.assertFalse(utils.models_are_equal(main.target_net, main.policy_net)[0])
-            elif i >= max(main.INITIAL_MEMORY, main.BATCH_SIZE) and (i + 1) % main.TARGET_UPDATE == 0:
-                self.assertTrue(*utils.models_are_equal(main.target_net, main.policy_net))
+    def test_learner_process_starts_and_blocks_with_empty_sample_queue(self):
+        self.learner.start()
+        time.sleep(1)
+        if not self.learner.proc.is_alive():
+            self.fail("Learner terminated unexpectedly")
 
 
+@unittest.skip
 class TestSystem(unittest.TestCase):
     def setUp(self) -> None:
         importlib.reload(main)
