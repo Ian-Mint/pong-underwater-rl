@@ -114,6 +114,7 @@ class TestModelInitialization(unittest.TestCase):
         set_main_args()
 
     def tearDown(self) -> None:
+        # noinspection PyTypeChecker
         importlib.reload(main)
 
     def assert_correct_initialization(self, model_class):
@@ -121,7 +122,7 @@ class TestModelInitialization(unittest.TestCase):
         self.assertEqual(type(policy), model_class)
 
     def test_dqn_initialized_correctly(self):
-        main.ARCHITECTURE = 'dqn_pong_model'
+        main.ARCHITECTURE = 'dqn'
         self.assert_correct_initialization(models.DQN)
 
     def test_lstm_initialized_correctly(self):
@@ -133,47 +134,45 @@ class TestModelInitialization(unittest.TestCase):
         self.assert_correct_initialization(models.DistributionalDQN)
 
 
-class TestSelectAction(unittest.TestCase):
+class TestActor(unittest.TestCase):
     def setUp(self) -> None:
         set_main_args()
         set_main_constants()
-        main.steps_done = 0
-        main.epoch = 0
-
-        make_env('dqn_pong_model')
-        obs = main.env.reset()
-        self.state = main.get_state(obs)
-
-        main.policy_net, main.target_net = main.initialize_model()
+        main.ARCHITECTURE = 'dqn'
+        
+        model = main.initialize_model()
+        memory_queue, namespace, param_update_request, _, _, _ = main.get_managed_objects()
+        self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
+                                event=param_update_request, namespace=namespace)
 
     def tearDown(self) -> None:
-        try:
-            main.get_epsilon = self.get_epsilon
-        except AttributeError:
-            pass
+        # noinspection PyTypeChecker
+        importlib.reload(main)
 
     def assert_valid_action(self, action):
         action = action.item()
         self.assertIn(action, {0, 1, 2})
 
-    def test_get_epsilon_is_1_at_start_of_training_episode_decay(self):
+    def test_epsilon_is_1_at_start_of_training_episode_decay(self):
         main.STEPSDECAY = False
-        eps = main.get_epsilon(0, 0)
+        eps = self.actor.epsilon
         self.assertEqual(1, eps)
 
-    def test_get_epsilon_is_minimum_at_infinite_episodes_and_steps_episode_decay(self):
+    def test_epsilon_is_minimum_at_infinite_episodes_and_steps_episode_decay(self):
         main.STEPSDECAY = False
-        eps = main.get_epsilon(math.inf, math.inf)
+        self.actor.epoch = math.inf
+        eps = self.actor.epsilon
         self.assertEqual(main.EPS_END, eps)
 
-    def test_get_epsilon_is_1_at_start_of_training_steps_decay(self):
+    def test_epsilon_is_1_at_start_of_training_steps_decay(self):
         main.STEPSDECAY = True
-        eps = main.get_epsilon(0, 0)
+        eps = self.actor.epsilon
         self.assertEqual(1, eps)
 
-    def test_get_epsilon_is_minimum_at_infinite_episodes_and_steps_steps_decay(self):
+    def test_epsilon_is_minimum_at_infinite_episodes_and_steps_steps_decay(self):
         main.STEPSDECAY = True
-        eps = main.get_epsilon(math.inf, math.inf)
+        self.actor.steps = math.inf
+        eps = self.actor.epsilon
         self.assertEqual(main.EPS_END, eps)
 
     def test_random_action_chosen_at_start_of_training(self):
@@ -208,7 +207,7 @@ class TestTrainFunctions(unittest.TestCase):
 
         self.initialize()
 
-    def initialize(self, architecture='dqn_pong_model'):
+    def initialize(self, architecture='dqn'):
         make_env(architecture)
         obs = main.env.reset()
         self.state = main.get_state(obs)
@@ -236,7 +235,7 @@ class TestMemory(unittest.TestCase):
 
         self.initialize()
 
-    def initialize(self, architecture='dqn_pong_model'):
+    def initialize(self, architecture='dqn'):
         make_env(architecture)
         obs = main.env.reset()
         self.state = main.get_state(obs)
@@ -253,7 +252,7 @@ class TestMemory(unittest.TestCase):
         self.assertIsInstance(main.initialize_replay_memory(), memory.EpisodicMemory)
 
     def test_dqn_has_default_memory(self):
-        main.ARCHITECTURE = 'dqn_pong_model'
+        main.ARCHITECTURE = 'dqn'
         self.assertIsInstance(main.initialize_replay_memory(), memory.ReplayMemory)
 
     def test_models_equal_after_update_target_net_if_steps_done_is_multiple_of_target_update(self):
@@ -301,7 +300,7 @@ class TestTrain(unittest.TestCase):
         if os.path.exists(main.args.store_dir):
             shutil.rmtree(main.args.store_dir)
 
-    def initialize(self, architecture='dqn_pong_model'):
+    def initialize(self, architecture='dqn'):
         make_env(architecture)
         obs = main.env.reset()
         self.state = main.get_state(obs)

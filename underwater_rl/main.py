@@ -11,6 +11,7 @@ import random
 import shutil
 import sys
 import threading
+from typing import Union
 import time
 from collections import namedtuple, deque
 from copy import deepcopy
@@ -183,7 +184,7 @@ class Learner:
         torch.save(
             {'Net': self.policy.state_dict(), 'Optimizer': self.optimizer.state_dict(), 'Steps_Done': steps_done,
              'Epoch': epoch},
-            os.path.join(args.store_dir, 'dqn_pong_model'))
+            os.path.join(args.store_dir, 'dqn'))
 
 
 def separate_batches(actions, batch, rewards):
@@ -225,7 +226,7 @@ def get_loss(state_action_values, expected_state_action_values, idxs, weights):
 class Actor:
     counter = 0
 
-    def __init__(self, model: nn.Module, n_episodes: int, render_mode: str, memory_queue: mp.Queue, event: mp.Event,
+    def __init__(self, model: nn.Module, n_episodes: int, render_mode: Union[str, bool], memory_queue: mp.Queue, event: mp.Event,
                  namespace: managers.Namespace):
         """
         Main training loop
@@ -532,8 +533,8 @@ def dispatch_make_env():
     return env
 
 
-def initialize_model():
-    model_lookup = {'dqn_pong_model': DQN,
+def initialize_model() -> nn.Module:
+    model_lookup = {'dqn': DQN,
                     'soft_dqn': softDQN,
                     'dueling_dqn': DuelingDQN,
                     'lstm': DRQN,
@@ -610,10 +611,10 @@ def get_parser():
     rl_args = parser.add_argument_group("Model", "Reinforcement learning model parameters")
     rl_args.add_argument('--learning-rate', default=1e-4, type=float,
                          help='learning rate (default: 1e-4)')
-    rl_args.add_argument('--network', default='dqn_pong_model',
-                         choices=['dqn_pong_model', 'soft_dqn', 'dueling_dqn', 'resnet18', 'resnet10', 'resnet12',
+    rl_args.add_argument('--network', default='dqn',
+                         choices=['dqn', 'soft_dqn', 'dueling_dqn', 'resnet18', 'resnet10', 'resnet12',
                                   'resnet14', 'lstm', 'distribution_dqn'],
-                         help='choose a network architecture (default: dqn_pong_model)')
+                         help='choose a network architecture (default: dqn)')
     rl_args.add_argument('--double', default=False, action='store_true',
                          help='switch for double dqn (default: False)')
     rl_args.add_argument('--pretrain', default=False, action='store_true',
@@ -641,8 +642,8 @@ def get_parser():
     resume_args = parser.add_argument_group("Resume", "Store experiments / Resume training")
     resume_args.add_argument('--resume', dest='resume', action='store_true',
                              help='Resume training switch. (omit to start from scratch)')
-    resume_args.add_argument('--checkpoint', default='dqn_pong_model',
-                             help='Checkpoint to load if resuming (default: dqn_pong_model)')
+    resume_args.add_argument('--checkpoint', default='model.torch',
+                             help='Checkpoint to load if resuming (default: model.torch)')
     resume_args.add_argument('--history', default='history.p',
                              help='History to load if resuming (default: history.p)')
     resume_args.add_argument('--store-dir', dest='store_dir',
@@ -694,6 +695,25 @@ def main():
     logger.info(f'Device: {DEVICE}')
 
     model = initialize_model()
+    memory_queue, namespace, param_update_request, replay_in_queue, replay_out_queue, sample_queue = \
+        get_managed_objects()
+
+    # Launch subprocesses
+    actor = Actor(model, args.episodes, args.render_mode, param_update_request, namespace)
+    png_encoder_proc = mp.Process(target=memory_encoder, args=(memory_queue, replay_in_queue))
+    png_decoder_proc = mp.Process(target=memory_decoder, args=(sample_queue, replay_out_queue))
+    replay = Replay(replay_in_queue, replay_out_queue)
+    learner = Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, event=param_update_request,
+                      namespace=namespace)
+
+    actor.run()
+    replay.run()
+    learner.run()
+    png_encoder_proc.start()
+    png_decoder_proc.start()
+
+
+def get_managed_objects():
     with mp.Manager() as manager:
         memory_queue = manager.Queue(maxsize=1000)
         replay_in_queue = manager.Queue(maxsize=1000)
@@ -702,20 +722,7 @@ def main():
 
         param_update_request = manager.Event()
         namespace = manager.Namespace()
-
-        # Launch subprocesses
-        actor = Actor(model, args.episodes, args.render_mode, param_update_request, namespace)
-        png_encoder_proc = mp.Process(target=memory_encoder, args=(memory_queue, replay_in_queue))
-        png_decoder_proc = mp.Process(target=memory_decoder, args=(sample_queue, replay_out_queue))
-        replay = Replay(replay_in_queue, replay_out_queue)
-        learner = Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, event=param_update_request,
-                          namespace=namespace)
-
-    actor.run()
-    replay.run()
-    learner.run()
-    png_encoder_proc.start()
-    png_decoder_proc.start()
+    return memory_queue, namespace, param_update_request, replay_in_queue, replay_out_queue, sample_queue
 
 
 global args, BATCH_SIZE, GAMMA, EPS_START, EPS_END, EPS_DECAY, TARGET_UPDATE, LR, INITIAL_MEMORY, MEMORY_SIZE, \
