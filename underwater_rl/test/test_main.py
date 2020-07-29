@@ -40,6 +40,7 @@ def set_main_args():
     main.args.paddle_angle = 70
     main.args.update_prob = 0.4
     main.args.ball_size = 2.0
+    main.args.ball_volume = False
     main.args.state = 'binary'
     main.args.store_dir = '__temp__'
     main.args.test = False
@@ -74,12 +75,12 @@ def randomize_weights(model):
 
 
 def make_env(architecture):
-    main.architecture = architecture
+    main.ARCHITECTURE = architecture
     main.env = main.dispatch_make_env()
 
 
 def initialize_models(architecture):
-    main.architecture = architecture
+    main.ARCHITECTURE = architecture
     main.policy_net, main.target_net = main.get_models()
     main.optimizer = optim.Adam(main.policy_net.parameters(), lr=main.LR)
     main.memory = main.initialize_replay_memory()
@@ -91,21 +92,21 @@ class TestEnv(unittest.TestCase):
         set_main_args()
 
     def test_lstm_env_is_not_stacked_after_reset(self):
-        main.architecture = 'lstm'
+        main.ARCHITECTURE = 'lstm'
         env = main.dispatch_make_env()
         obs = env.reset()
         state = main.get_state(obs)
         self.assertEqual((1, 1, 84, 84), state.size())
 
     def test_default_env_has_4_frames_stacked_after_reset(self):
-        main.architecture = None
+        main.ARCHITECTURE = None
         env = main.dispatch_make_env()
         obs = env.reset()
         state = main.get_state(obs)
         self.assertEqual((1, 4, 84, 84), state.size())
 
     def test_lstm_env_is_not_stacked_after_step(self):
-        main.architecture = 'lstm'
+        main.ARCHITECTURE = 'lstm'
         env = main.dispatch_make_env()
         _ = env.reset()
         obs, reward, done, info = env.step(0)
@@ -113,7 +114,7 @@ class TestEnv(unittest.TestCase):
         self.assertEqual((1, 1, 84, 84), state.size())
 
     def test_default_env_has_4_frames_stacked_after_step(self):
-        main.architecture = None
+        main.ARCHITECTURE = None
         env = main.dispatch_make_env()
         _ = env.reset()
         obs, reward, done, info = env.step(0)
@@ -126,11 +127,11 @@ class TestMemoryInitialization(unittest.TestCase):
         set_main_args()
 
     def test_lstm_has_episodic_memory(self):
-        main.architecture = 'lstm'
+        main.ARCHITECTURE = 'lstm'
         self.assertIsInstance(main.initialize_replay_memory(), memory.EpisodicMemory)
 
     def test_dqn_has_default_memory(self):
-        main.architecture = 'dqn_pong_model'
+        main.ARCHITECTURE = 'dqn_pong_model'
         self.assertIsInstance(main.initialize_replay_memory(), memory.ReplayMemory)
 
 
@@ -273,11 +274,11 @@ class TestMemory(unittest.TestCase):
         main.memory_store(self.episode, *self.transition)
 
     def test_lstm_has_episodic_memory(self):
-        main.architecture = 'lstm'
+        main.ARCHITECTURE = 'lstm'
         self.assertIsInstance(main.initialize_replay_memory(), memory.EpisodicMemory)
 
     def test_dqn_has_default_memory(self):
-        main.architecture = 'dqn_pong_model'
+        main.ARCHITECTURE = 'dqn_pong_model'
         self.assertIsInstance(main.initialize_replay_memory(), memory.ReplayMemory)
 
     def test_models_equal_after_update_target_net_if_steps_done_is_multiple_of_target_update(self):
