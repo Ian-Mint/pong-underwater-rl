@@ -145,12 +145,14 @@ class TestActor(unittest.TestCase):
         self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
                                 event=param_update_request, namespace=namespace)
 
+        obs = self.actor.env.reset()
+        self.state = main.get_state(obs)
+
     def tearDown(self) -> None:
         # noinspection PyTypeChecker
         importlib.reload(main)
 
     def assert_valid_action(self, action):
-        action = action.item()
         self.assertIn(action, {0, 1, 2})
 
     def test_epsilon_is_1_at_start_of_training_episode_decay(self):
@@ -176,25 +178,23 @@ class TestActor(unittest.TestCase):
         self.assertEqual(main.EPS_END, eps)
 
     def test_random_action_chosen_at_start_of_training(self):
-        with mock.patch.object(type(main.policy_net), '__call__') as policy_net:
-            _ = main.select_action(self.state)
-            self.assertFalse(policy_net.called)
+        with mock.patch.object(type(self.actor.policy), '__call__') as policy:
+            _ = self.actor.select_action(self.state)
+            self.assertFalse(policy.called)
 
     def test_valid_action_chosen_at_start_of_training(self):
-        action = main.select_action(self.state)
+        action = self.actor.select_action(self.state)
         self.assert_valid_action(action)
 
     def test_policy_net_action_chosen_at_end_of_training(self):
-        self.get_epsilon = main.get_epsilon
-        main.get_epsilon = lambda *args: 0  # mock epsilon to 0
-        with mock.patch.object(type(main.policy_net), '__call__') as policy_net:
-            _ = main.select_action(self.state)
-            self.assertTrue(policy_net.called)
+        type(self.actor).epsilon = property(lambda *args: 0)  # mock epsilon to 0
+        with mock.patch.object(type(self.actor.policy), '__call__') as policy:
+            _ = self.actor.select_action(self.state)
+            self.assertTrue(policy.called)
 
     def test_policy_net_action_valid_at_end_of_training(self):
-        self.get_epsilon = main.get_epsilon
-        main.get_epsilon = lambda *args: 0  # mock epsilon to 0
-        action = main.select_action(self.state)
+        type(self.actor).epsilon = property(lambda *args: 0)  # mock epsilon to 0
+        action = self.actor.select_action(self.state)
         self.assert_valid_action(action)
 
 

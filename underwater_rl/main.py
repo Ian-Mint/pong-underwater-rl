@@ -43,7 +43,7 @@ except ImportError:
 
 # Constants
 MEMORY_BATCH_SIZE = 100
-N_ACTIONS = 4
+N_ACTIONS = 3
 ACTOR_UPDATE_INTERVAL = 1000
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 # warnings.filterwarnings("ignore", category=UserWarning)
@@ -71,8 +71,8 @@ class Learner:
         self.proc.terminate()
         self.proc.join()
 
-    def run(self):
-        self.proc.run()
+    def start(self):
+        self.proc.start()
 
     def main_worker(self):
         while True:
@@ -226,8 +226,8 @@ def get_loss(state_action_values, expected_state_action_values, idxs, weights):
 class Actor:
     counter = 0
 
-    def __init__(self, model: nn.Module, n_episodes: int, render_mode: Union[str, bool], memory_queue: mp.Queue, event: mp.Event,
-                 namespace: managers.Namespace):
+    def __init__(self, model: nn.Module, n_episodes: int, render_mode: Union[str, bool], memory_queue: mp.Queue,
+                 event: mp.Event, namespace: managers.Namespace):
         """
         Main training loop
 
@@ -253,11 +253,12 @@ class Actor:
         self.proc = mp.Process(target=self.main_worker)
 
     def __del__(self):
-        self.proc.terminate()
-        self.proc.join()
+        if self.proc.pid is not None:
+            self.proc.terminate()
+            self.proc.join()
 
-    def run(self):
-        self.proc.run()
+    def start(self):
+        self.proc.start()
 
     def main_worker(self):
         for episode in range(1, self.n_episodes + 1):
@@ -444,7 +445,7 @@ class Replay:
         self.proc.terminate()
         self.proc.join()
 
-    def run(self):
+    def start(self):
         self.proc.start()
 
     def main_worker(self):
@@ -706,9 +707,9 @@ def main():
     learner = Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, event=param_update_request,
                       namespace=namespace)
 
-    actor.run()
-    replay.run()
-    learner.run()
+    actor.start()
+    replay.start()
+    learner.start()
     png_encoder_proc.start()
     png_decoder_proc.start()
 
