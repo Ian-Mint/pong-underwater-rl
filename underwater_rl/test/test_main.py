@@ -74,19 +74,6 @@ def randomize_weights(model):
             nn.init.zeros_(p)
 
 
-def make_env(architecture):
-    main.ARCHITECTURE = architecture
-    main.env = main.dispatch_make_env()
-
-
-def initialize_models(architecture):
-    main.ARCHITECTURE = architecture
-    main.policy_net, main.target_net = main.get_models()
-    main.optimizer = optim.Adam(main.policy_net.parameters(), lr=main.LR)
-    main.memory = main.initialize_replay_memory()
-    main.history = main.initialize_history()
-
-
 class TestEnv(unittest.TestCase):
     def setUp(self) -> None:
         set_main_args()
@@ -122,39 +109,27 @@ class TestEnv(unittest.TestCase):
         self.assertEqual((1, 4, 84, 84), state.size())
 
 
-class TestMemoryInitialization(unittest.TestCase):
-    def setUp(self) -> None:
-        set_main_args()
-
-    def test_lstm_has_episodic_memory(self):
-        main.ARCHITECTURE = 'lstm'
-        self.assertIsInstance(main.initialize_replay_memory(), memory.EpisodicMemory)
-
-    def test_dqn_has_default_memory(self):
-        main.ARCHITECTURE = 'dqn_pong_model'
-        self.assertIsInstance(main.initialize_replay_memory(), memory.ReplayMemory)
-
-
 class TestModelInitialization(unittest.TestCase):
     def setUp(self) -> None:
         set_main_args()
 
+    def tearDown(self) -> None:
+        importlib.reload(main)
+
     def assert_correct_initialization(self, model_class):
-        main.policy_net, main.target_net = main.get_models()
-        self.assertEqual(type(main.policy_net), model_class)
-        self.assertEqual(type(main.target_net), model_class)
-        self.assertTrue(*utils.models_are_equal(main.policy_net, main.target_net))
+        policy = main.initialize_model()
+        self.assertEqual(type(policy), model_class)
 
     def test_dqn_initialized_correctly(self):
-        make_env('dqn_pong_model')
+        main.ARCHITECTURE = 'dqn_pong_model'
         self.assert_correct_initialization(models.DQN)
 
     def test_lstm_initialized_correctly(self):
-        make_env('lstm')
+        main.ARCHITECTURE = 'lstm'
         self.assert_correct_initialization(models.DRQN)
 
     def test_distributional_initialized_correctly(self):
-        make_env('distribution_dqn')
+        main.ARCHITECTURE = 'distributional_dqn'
         self.assert_correct_initialization(models.DistributionalDQN)
 
 
@@ -169,7 +144,7 @@ class TestSelectAction(unittest.TestCase):
         obs = main.env.reset()
         self.state = main.get_state(obs)
 
-        main.policy_net, main.target_net = main.get_models()
+        main.policy_net, main.target_net = main.initialize_model()
 
     def tearDown(self) -> None:
         try:
