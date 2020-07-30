@@ -1,21 +1,20 @@
-from functools import reduce
 import importlib
 import math
-from matplotlib import cm
 import multiprocessing as mp
-import numpy as np
-from operator import mul
 import os
-from PIL import Image
 import shutil
 import sys
 import time
 import unittest
 import unittest.mock as mock
+from functools import reduce
+from operator import mul
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from PIL import Image
 
 try:
     import underwater_rl.main as main
@@ -121,8 +120,7 @@ class TestMemoryEncoder(unittest.TestCase):
         main.create_storage_dir()
         main.logger = main.get_logger(main.args.store_dir)
 
-        self.manager = mp.Manager()
-        self.memory_queue, _, _, _, self.replay_out_queue, _ = main.get_managed_objects(self.manager)
+        self.memory_queue, _, _, _, _, self.replay_out_queue, _ = main.get_communication_objects()
 
         self.proc = mp.Process(target=main.memory_encoder, args=(self.memory_queue, self.replay_out_queue))
 
@@ -192,10 +190,9 @@ class TestActor(unittest.TestCase):
         main.ARCHITECTURE = 'dqn'
 
         model = main.initialize_model()
-        self.manager = mp.Manager()
-        memory_queue, namespace, param_update_request, _, _, _ = main.get_managed_objects(self.manager)
+        memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects()
         self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
-                                event=param_update_request, namespace=namespace)
+                                event=param_update_request, params_in=params_in)
 
         obs = self.actor.env.reset()
         self.state = main.get_state(obs)
@@ -255,8 +252,7 @@ class TestReplay(unittest.TestCase):
         set_main_args()
         set_main_constants()
 
-        self.manager = mp.Manager()
-        _, _, _, replay_in_queue, replay_out_queue, _ = main.get_managed_objects(self.manager)
+        _, _, _, replay_in_queue, replay_out_queue, _ = main.get_communication_objects()
         self.replay = main.Replay(replay_in_queue, replay_out_queue)
 
     # todo: mock some queues and test multiprocessing
@@ -271,18 +267,20 @@ class TestLearner(unittest.TestCase):
         main.ARCHITECTURE = 'dqn'
         set_main_args()
         set_main_constants()
+        self.store_dir = '__temp__'
+        main.args.store_dir = self.store_dir
+        main.logger = main.get_logger(self.store_dir)
 
         model = main.initialize_model()
-        self.manager = mp.Manager()
-        _, namespace, param_update_request, _, _, sample_queue = main.get_managed_objects(self.manager)
+        _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects()
         self.learner = main.Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue,
-                                    event=param_update_request, namespace=namespace)
+                                    event=param_update_request, params_out=params_out)
 
     def tearDown(self) -> None:
         del self.learner
         importlib.reload(main)
-        if os.path.exists(main.args.store_dir):
-            shutil.rmtree(main.args.store_dir)
+        if os.path.exists(self.store_dir):
+            shutil.rmtree(self.store_dir)
 
     def test_learner_process_starts_and_blocks_with_empty_sample_queue(self):
         self.learner.start()
