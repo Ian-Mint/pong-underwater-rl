@@ -86,7 +86,7 @@ class Learner:
 
     def update_actors(self):
         if self.event.is_set():
-            self.params_out.send(tuple(self.policy.state_dict()))
+            self.params_out.send(self.policy.state_dict())
             self.event.clear()
 
     def optimize_model(self):
@@ -154,7 +154,8 @@ class Learner:
         if PRIORITY:
             raise NotImplementedError("Prioritized replay not yet implemented")
         else:
-            transitions = self.sample_queue.get()  # block here until a sample is available
+            transitions = self.sample_queue.get()
+            logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after get')
 
         batch, actions, rewards = process_transitions(transitions)
         return batch, actions, rewards, idxs, weights
@@ -281,7 +282,9 @@ class Actor:
     def update_params(self):
         self.event.set()
         wait_event_not_set(self.event, timeout=None)
-        self.policy.load_state_dict(self.params_in.recv())
+        logger.debug(f"params in:")
+        params = self.params_in.recv()
+        self.policy.load_state_dict(params)
         logger.debug(f"Actor-{self.id} params updated")
 
     def run_episode(self):
@@ -309,7 +312,8 @@ class Actor:
         else:
             next_state = None
         if not args.test:
-            self.memory_queue.put(Transition(self.id, self.steps, state, action, next_state, reward), timeout=10)
+            self.memory_queue.put(Transition(self.id, self.steps, state, action, next_state, reward))
+            logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after put')
         return done, total_reward, next_state
 
     def select_action(self, state):
@@ -394,7 +398,7 @@ def memory_encoder(memory_queue, replay_in_queue):
     while True:
         if not memory_queue.empty():
             actor_id, step_number, state, action, next_state, reward = memory_queue.get()
-            # logger.debug("Pulled from memory_queue")
+            logger.debug(f'memory_queue length: {memory_queue.qsize()} after get')
             assert isinstance(state, torch.Tensor), breakpoint()
             assert isinstance(next_state, (torch.Tensor, type(None))), breakpoint()
             assert isinstance(action, int), breakpoint()
@@ -417,7 +421,7 @@ def memory_encoder(memory_queue, replay_in_queue):
                     png_next_state = encode_stacked_frames(next_state)
 
             replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
-            # logger.debug("Pushed to replay_in_queue")
+            logger.debug(f'replay_in_queue length: {replay_in_queue.qsize()} after put')
         else:
             time.sleep(0.1)
 
@@ -450,6 +454,7 @@ def memory_decoder(sample_queue, replay_out_queue):
     while True:
         if not replay_out_queue.empty():
             batch = replay_out_queue.get()
+            logger.debug(f'replay_out_queue length: {replay_out_queue.qsize()} after get')
 
             next_state = None
             decoded_batch = []
@@ -464,7 +469,8 @@ def memory_decoder(sample_queue, replay_out_queue):
                     if png_next_state is not None:
                         next_state = transform(Image.open(png_next_state)).to(DEVICE)
                 decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
-            sample_queue.put(decoded_batch, timeout=1)
+            sample_queue.put(decoded_batch)
+            logger.debug(f'sample_queue length: {sample_queue.qsize()} after put')
         else:
             time.sleep(0.1)
 
@@ -493,9 +499,9 @@ class Replay:
         self.mode = mode
         self.memory = deque(maxlen=MEMORY_SIZE)
 
-        self.proc = mp.Process(target=self.main_worker, name="Replay")
         self.push_thread = threading.Thread(target=self.push_worker, daemon=True, name="Push")
-        self.sample_thread = threading.Thread(target=self.sample_worker, daemon=True, name="Sample")
+        # self.sample_thread = threading.Thread(target=self.sample_worker, daemon=True, name="Sample")
+        self.proc = mp.Process(target=self.main_worker, name="Replay")
 
     def __del__(self):
         self.terminate()
@@ -510,29 +516,27 @@ class Replay:
         logger.debug("Replay process started")
 
     def main_worker(self):
+        """
+        Launch push thread and run push worker in the main thread.
+        """
         self.push_thread.start()
-        self.sample_thread.start()
+        self.sample_worker()
 
     def push_worker(self):
         logger.debug("Replay memory push worker started")
         while True:
-            if not self.replay_in_queue.empty():
-                memory = self.replay_in_queue.get()  # blocks if the queue is empty
-                self.memory.append(memory)
-                logger.debug(f"replay length: {len(self.memory)}")
-            else:
-                logger.debug("push worker sleeping")
-                time.sleep(1)
+            memory = self.replay_in_queue.get()  # blocks if the queue is empty
+            logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after get')
+            self.memory.append(memory)
+            logger.debug(f"replay length: {len(self.memory)}")
 
     def sample_worker(self):
+        logger.debug("Replay memory sample worker started")
         while True:
             if len(self.memory) >= INITIAL_MEMORY:
                 batch = random.sample(self.memory, BATCH_SIZE)
                 self.replay_out_queue.put(batch)  # blocks if the queue is full
-                logger.debug("sample put")
-            else:
-                logger.debug("sample put worker sleeping")
-                time.sleep(1)
+                logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
 
 
 def log_checkpoint(epoch, history, steps):
@@ -742,14 +746,17 @@ def main():
     create_storage_dir()
 
     # hyperparameters
-    BATCH_SIZE = args.batch_size
+    # todo: restore correct arguments after debugging
+    # BATCH_SIZE = args.batch_size
+    BATCH_SIZE = 3
     GAMMA = 0.99
     EPS_START = 1
     EPS_END = 0.02
     EPS_DECAY = args.epsdecay
     TARGET_UPDATE = 1000
     LR = args.learning_rate
-    INITIAL_MEMORY = args.replay // 10
+    # INITIAL_MEMORY = args.replay // 10
+    INITIAL_MEMORY = 10
     MEMORY_SIZE = args.replay
     DOUBLE = args.double
     STEPSDECAY = args.stepsdecay
@@ -768,6 +775,19 @@ def main():
 
     # Get shared objects
     model = initialize_model()
+    """
+    Actor -> memory_queue
+                        |  
+    Encoder             +-> replay_in_queue
+                                          |
+    Replay                                +-> memory
+                                                   |
+    Replay                                         +-> replay_out_queue
+                                                                      |
+    Decoder                                                           +-> sample_queue
+                                                                                     |
+    Learner                                                                          +-> sample
+    """
     memory_queue, pipe_in, pipe_out, param_update_request, replay_in_queue, replay_out_queue, sample_queue = \
         get_communication_objects()
 
@@ -788,9 +808,9 @@ def main():
     learner.start()
 
     # enumerate threads
-    logger.debug('- '.join([t.name for t in threading.enumerate()]))
+    logger.debug('Initial Threads: ' + ' - '.join([t.name for t in threading.enumerate()]))
     time.sleep(10)
-    logger.debug('- '.join([t.name for t in threading.enumerate()]))
+    logger.debug('Threads after 10s: ' + ' - '.join([t.name for t in threading.enumerate()]))
 
     # Join subprocess. actor is the only one that is not infinite.
     actor.join()
@@ -804,10 +824,11 @@ def main():
 
 
 def get_communication_objects():
-    memory_queue = mp.Queue(maxsize=1000)
-    replay_in_queue = mp.Queue(maxsize=1000)
-    replay_out_queue = mp.Queue(maxsize=10)
-    sample_queue = mp.Queue(maxsize=10)
+    # todo: change queue sizes when done debugging
+    memory_queue = mp.Queue(maxsize=10)
+    replay_in_queue = mp.Queue(maxsize=10)
+    replay_out_queue = mp.Queue(maxsize=3)
+    sample_queue = mp.Queue(maxsize=3)
 
     param_update_request = mp.Event()
     pipe_in, pipe_out = mp.Pipe()
