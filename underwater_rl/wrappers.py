@@ -9,7 +9,7 @@ import gym
 import numpy as np
 
 __all__ = ['make_env', 'RewardScaler', 'ClipRewardEnv', 'LazyFrames', 'FrameStack', 'WarpFrame', 'FireResetEnv',
-           'EpisodicLifeEnv', 'MaxAndSkipEnv', 'NoopResetEnv']
+           'EpisodicLifeEnv', 'MaxAndSkipEnv', 'NoopResetEnv', 'StackAndSkipEnv']
 
 cv2.ocl.setUseOpenCL(False)
 
@@ -210,6 +210,38 @@ class MaxAndSkipEnv(gym.Wrapper):
         obs = self.env.reset()
         self._obs_buffer.append(obs)
         return obs
+
+
+class StackAndSkipEnv(gym.Wrapper):
+    def __init__(self, env=None, skip=4):
+        """Return only every `skip`-th frame"""
+        super(StackAndSkipEnv, self).__init__(env)
+        # most recent raw observations (for max pooling across time steps)
+        self._obs_buffer = deque(maxlen=skip)
+        self._skip = skip
+
+    def step(self, action):
+        total_reward = 0.0
+        done, info = (None, ) * 2
+        for _ in range(self._skip):
+            obs, reward, done, info = self.env.step(action)
+            self._obs_buffer.append(obs)
+            total_reward += reward
+            if done:
+                break
+
+        stacked = np.stack(self._obs_buffer)
+
+        return stacked, total_reward, done, info
+
+    def reset(self):
+        """Clear past frame buffer and init. to first obs. from inner env."""
+        self._obs_buffer.clear()
+        obs = self.env.reset()
+        for _ in range(self._skip):
+            self._obs_buffer.append(obs)
+        stacked = np.stack(self._obs_buffer)
+        return stacked
 
 
 class NoopResetEnv(gym.Wrapper):

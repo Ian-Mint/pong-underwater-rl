@@ -361,7 +361,13 @@ class TestSystem(unittest.TestCase):
         shutil.rmtree(self.store_dir)
 
     def test_main_runs_for_10_episodes_with_default_settings(self):
-        sys.argv = [os.path.abspath('../main.py'), '--episodes', '110', '--store-dir', self.store_dir]
+        sys.argv = [os.path.abspath('../main.py'), '--episodes', '10', '--store-dir', self.store_dir]
+        main.main()
+
+    def test_main_runs_for_10_episodes_with_basic_state(self):
+
+        sys.argv = [os.path.abspath('../main.py'), '--episodes', '10', '--store-dir', self.store_dir,
+                    '--state', 'basic-no-render']
         main.main()
 
 

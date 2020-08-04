@@ -8,7 +8,7 @@ except ImportError:
     from torch.utils.model_zoo import load_url as load_state_dict_from_url
 
 __all__ = ['DQNbn', 'DQN', 'DuelingDQN', 'softDQN', 'DistributionalDQN', 'ResNet', 'resnet18', 'resnet10', 'resnet12',
-           'resnet14', 'PolicyGradient', 'Actor', 'Critic', 'DRQN']
+           'resnet14', 'PolicyGradient', 'Actor', 'Critic', 'DRQN', 'BasicNet']
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 
@@ -65,6 +65,25 @@ class DQN(nn.Module):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.relu(self.conv3(x))
+        x = F.relu(self.fc4(x.reshape(x.size(0), -1)))
+        return self.head(x)
+
+
+class BasicNet(nn.Module):
+    def __init__(self, in_channels=4, n_actions=3, **kwargs):
+        """
+        Initialize Deep Q Network
+
+        Args:
+            in_channels (int): number of input channels
+            n_actions (int): number of outputs
+        """
+        super(BasicNet, self).__init__()
+        self.fc4 = nn.Linear(in_channels, 512)
+        self.head = nn.Linear(512, n_actions)
+
+    def forward(self, x):
+        x = x.float() / 255
         x = F.relu(self.fc4(x.reshape(x.size(0), -1)))
         return self.head(x)
 

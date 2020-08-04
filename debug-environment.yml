@@ -1,6 +1,7 @@
 name: pong-underwater-rl
 channels:
   - powerai
+  - plotly
   - conda-forge
   - pytorch
   - defaults
@@ -21,5 +22,6 @@ dependencies:
   - scikit-learn
   - jupyter
   - jupyter-themes
+  - chart-studio
 
 

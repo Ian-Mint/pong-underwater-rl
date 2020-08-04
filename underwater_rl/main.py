@@ -191,7 +191,8 @@ def process_transitions(transitions):
 
 def get_state(obs):
     state = np.array(obs)
-    state = state.transpose((2, 0, 1))
+    if state.ndim == 3:
+        state = state.transpose((2, 0, 1))
     state = torch.from_numpy(state)
     return state.unsqueeze(0)
 
@@ -441,13 +442,19 @@ def dispatch_make_env():
     # TODO: consider removing some of the wrappers - may improve performance
     if architecture == 'lstm':
         env = make_env(env, stack_frames=False, episodic_life=True, clip_rewards=True, max_and_skip=False)
+    elif 'basic' in args.state:
+        env = StackAndSkipEnv(env, skip=4)
     else:
         env = make_env(env, stack_frames=True, episodic_life=True, clip_rewards=True, max_and_skip=True)
     return env
 
 
 def get_models(architecture, n_actions):
-    if architecture == 'dqn_pong_model':
+    if 'basic' in args.state:
+        policy_net = BasicNet(in_channels=24, n_actions=n_actions).to(device)
+        target_net = BasicNet(in_channels=24, n_actions=n_actions).to(device)
+        target_net.load_state_dict(policy_net.state_dict())
+    elif architecture == 'dqn_pong_model':
         policy_net = DQN(n_actions=n_actions).to(device)
         target_net = DQN(n_actions=n_actions).to(device)
         target_net.load_state_dict(policy_net.state_dict())
@@ -568,7 +575,8 @@ def get_parser():
                           help='paddle length (default: 20)')
     env_args.add_argument('--update-prob', dest='update_prob', default=0.4, type=float,
                           help='Probability that the opponent moves in the direction of the ball (default: 0.4)')
-    env_args.add_argument('--state', default='binary', type=str, choices=['binary', 'color'],
+    env_args.add_argument('--state', default='binary', type=str,
+                          choices=['color', 'binary', 'basic-render', 'basic-no-render', 'basic-binary'],
                           help='state representation (default: binary)')
 
     '''RL args'''

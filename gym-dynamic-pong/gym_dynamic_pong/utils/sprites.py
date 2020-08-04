@@ -397,6 +397,18 @@ class Canvas(Rectangle):
     def bottom_bound(self):
         return 0
 
+    @property
+    def state(self) -> Tuple[float, float, float, float, float, float]:
+        """
+        Return the basic variable state representation of the environment.
+        - ball position (x,y)
+        - ball velocity (x,y)
+        - opponent paddle y-position
+        - our paddle y-position
+        """
+        velocity = self.ball.get_velocity(self._get_ball_speed())
+        return self.ball.pos.x, self.ball.pos.y, velocity.x, velocity.y, self.paddle_l.y, self.paddle_r.y
+
     # noinspection PyMethodOverriding
     def to_numpy(self) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -440,7 +452,7 @@ class Canvas(Rectangle):
         self._step_snell()
         return reward
 
-    def get_state_size(self) -> Tuple[int, int]:
+    def size(self) -> Tuple[int, int]:
         """
         Return the tuple (height, width) of the canvas dimensions
         """
