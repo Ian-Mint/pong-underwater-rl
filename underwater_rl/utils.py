@@ -2,13 +2,49 @@
 
 import argparse
 import glob
+import multiprocessing as mp
+import logging
+import logging.handlers
 import os
 import re
+import threading
 import time
+from typing import Tuple
 
 import cv2
 import numpy as np
 import torch
+
+
+def get_logger(store_dir) -> Tuple[logging.Logger, threading.Thread]:
+    def log_worker(q):
+        while True:
+            record = q.get()
+            if record is None:
+                break
+            logger = logging.getLogger(record.name)
+            logger.handle(record)
+
+    log_queue = mp.Queue()
+
+    log_path = os.path.join(store_dir, 'output.log')
+    logger = logging.Logger('train_status', level=logging.DEBUG)
+
+    stdout_handler = logging.StreamHandler()
+    stdout_handler.setLevel(logging.INFO)
+    stdout_handler.setFormatter(logging.Formatter('%(levelname)s | %(processName)s: %(process)d | %(threadName)s | %(message)s'))
+
+    file_handler = logging.FileHandler(log_path)
+    file_handler.setFormatter(logging.Formatter('%(asctime)s\t%(levelname)s\t%(message)s'))
+
+    qh = logging.handlers.QueueHandler(log_queue)
+
+    logger.addHandler(file_handler)
+    logger.addHandler(stdout_handler)
+    logger.addHandler(qh)
+
+    logger_thread = threading.Thread(target=log_worker, args=(log_queue,), name="LogThread")
+    return logger, logger_thread
 
 
 def models_are_equal(model_1, model_2):

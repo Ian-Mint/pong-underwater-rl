@@ -33,12 +33,12 @@ try:
     from .memory import *
     from .models import *
     from .wrappers import *
-    from .utils import convert_images_to_video, distr_projection, get_args_status_string
+    from .utils import convert_images_to_video, distr_projection, get_args_status_string, get_logger
 except ImportError:
     from memory import *
     from models import *
     from wrappers import *
-    from utils import convert_images_to_video, distr_projection, get_args_status_string
+    from utils import convert_images_to_video, distr_projection, get_args_status_string, get_logger
 
 # Constants
 MEMORY_BATCH_SIZE = 100
@@ -46,27 +46,35 @@ N_ACTIONS = 3
 ACTOR_UPDATE_INTERVAL = 1000
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 # warnings.filterwarnings("ignore", category=UserWarning)
-Transition = namedtuple('Transition', ('actor', 'step_number', 'state', 'action', 'next_state', 'reward'))
+Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward'))
+ProcessedBatch = namedtuple(
+    'ProcessedBatch', ('actions', 'rewards', 'states', 'non_final_mask', 'non_final_next_states', 'idxs', 'weights'))
+HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
 
 
 class Learner:
-    def __init__(self, optimizer, model, sample_queue: mp.Queue, event: mp.Event, params_out: mp.connection.Connection):
+    def __init__(self, optimizer, model, sample_queue: mp.Queue, event: mp.Event, params_out: mp.connection.Connection,
+                 batch_size: int):
         if not isinstance(model, DQN):
             raise NotImplementedError("Only DQN models are implemented for now")
 
+        # todo: currently, batch_size does not control the batch size. It is only used for calculating total samples
         self.sample_queue = sample_queue
         self.event = event
         self.params_out = params_out
+        self.batch_size = batch_size
 
         self.policy = deepcopy(model)
         self.target = deepcopy(model)
         self.optimizer = optimizer(self.policy.parameters(), lr=LR)
 
         self.loss = None
+        self.epoch = 0
 
         self.proc = mp.Process(target=self.main_worker, name="Learner")
 
     def __del__(self):
+        self.save_checkpoint()
         self.terminate()
 
     def terminate(self):
@@ -79,10 +87,12 @@ class Learner:
         logger.debug("Learner process started")
 
     def main_worker(self):
-        while True:
+        for self.epoch in count(1):
             self.optimize_model()
             self.update_target_net()
             self.update_actors()
+            if self.epoch % CHECKPOINT_INTERVAL:
+                self.save_checkpoint()
 
     def update_actors(self):
         if self.event.is_set():
@@ -90,10 +100,7 @@ class Learner:
             self.event.clear()
 
     def optimize_model(self):
-        # todo: move this stuff into the decoder process
-        batch, actions, rewards, idxs, weights = self.sample()
-        non_final_mask, non_final_next_states = mask_non_final(batch)
-        action_batch, reward_batch, state_batch = separate_batches(actions, batch, rewards)
+        action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
 
         state_action_values = self.forward_policy(action_batch, state_batch)
         next_state_values = self.forward_target(non_final_mask, non_final_next_states)
@@ -104,9 +111,7 @@ class Learner:
         self.step_optimizer()
 
     def optimize_lstm(self):
-        batch, actions, rewards, idxs, weights = self.sample()
-        non_final_mask, non_final_next_states = mask_non_final(batch)
-        action_batch, reward_batch, state_batch = separate_batches(actions, batch, rewards)
+        action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
 
         self.policy.zero_hidden()
         self.target.zero_hidden()
@@ -119,12 +124,11 @@ class Learner:
         self.step_optimizer()
 
     def optimize_distributional(self):
-        batch, actions, rewards, idxs, weights = self.sample()
-        action_batch, reward_batch, state_batch = separate_batches(actions, batch, rewards)
+        action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
 
         next_states_v = torch.cat(
-            [s if s is not None else batch.state[i] for i, s in enumerate(batch.next_state)]).to(DEVICE)
-        dones = np.stack(tuple(map(lambda s: s is None, batch.next_state)))
+            [s if s is not None else state_batch[i] for i, s in enumerate(state_batch)]).to(DEVICE)
+        dones = np.stack(tuple(map(lambda s: s is None, state_batch)))
         # next state distribution
         next_distr_v, next_qvals_v = self.target.both(next_states_v)
         next_actions = next_qvals_v.max(1)[1].data.cpu().numpy()
@@ -148,17 +152,14 @@ class Learner:
 
         self.step_optimizer()
 
-    def sample(self):
-        idxs, weights = None, None
-
+    def sample(self) -> ProcessedBatch:
         if PRIORITY:
             raise NotImplementedError("Prioritized replay not yet implemented")
         else:
-            transitions = self.sample_queue.get()
+            processed_batch = self.sample_queue.get()
             logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after get')
 
-        batch, actions, rewards = process_transitions(transitions)
-        return batch, actions, rewards, idxs, weights
+        return processed_batch
 
     def forward_policy(self, action_batch, state_batch):
         return self.policy(state_batch).gather(1, action_batch)
@@ -183,13 +184,14 @@ class Learner:
         self.optimizer.step()
 
     def update_target_net(self):
-        # todo: any reason not to update on every step?
         self.target.load_state_dict(self.policy.state_dict())
 
     def save_checkpoint(self):
         torch.save(
-            {'Net': self.policy.state_dict(), 'Optimizer': self.optimizer.state_dict(), 'Steps_Done': steps_done,
-             'Epoch': epoch},
+            {'policy_state': self.policy.state_dict(),
+             'optimizer_state': self.optimizer.state_dict(),
+             'samples_processed': self.epoch * self.batch_size,
+             'epoch': self.epoch},
             os.path.join(args.store_dir, 'dqn'))
 
 
@@ -233,17 +235,17 @@ class Actor:
     counter = 0
 
     def __init__(self, model: nn.Module, n_episodes: int, render_mode: Union[str, bool], memory_queue: mp.Queue,
-                 event: mp.Event, params_in: mp.connection.Connection):
+                 load_params_event: mp.Event, params_in: mp.connection.Connection):
         """
         Main training loop
 
-        :param event:
+        :param load_params_event:
         :param params_in:
         :param n_episodes: Number of episodes over which to train or test
         :param render_mode: How and whether to visibly render states
         """
         self.params_in = params_in
-        self.event = event
+        self.load_params_event = load_params_event
         self.memory_queue = memory_queue
         self.env = dispatch_make_env()
         self.policy = deepcopy(model)
@@ -253,8 +255,9 @@ class Actor:
         self.id = self.counter
         type(self).counter += 1
 
-        self.epoch = 0
-        self.steps = 0
+        self.episode = 0
+        self.total_steps = 0
+        self.history = []
 
         self.proc = mp.Process(target=self.main_worker, name=f"Actor-{self.id}")
 
@@ -272,16 +275,17 @@ class Actor:
         logger.debug(f"Actor-{self.id} started")
 
     def main_worker(self):
-        for episode in range(1, self.n_episodes + 1):
+        for self.episode in range(1, self.n_episodes + 1):
             self.run_episode()
-            logger.debug(f"Actor-{self.id}, episode {episode} complete")
+            logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
+            self.log_checkpoint(interval=LOG_INTERVAL)
         self.env.close()
         self.finish_rendering()
         logger.info(f"Actor-{self.id} done")
 
     def update_params(self):
-        self.event.set()
-        wait_event_not_set(self.event, timeout=None)
+        self.load_params_event.set()
+        wait_event_not_set(self.load_params_event, timeout=None)
         logger.debug(f"params in:")
         params = self.params_in.recv()
         self.policy.load_state_dict(params)
@@ -289,19 +293,20 @@ class Actor:
 
     def run_episode(self):
         obs = self.env.reset()
-        state = get_state(obs)  # torch.Size([1, 4, 84, 84])
-        assert state.size() == (1, 4, 84, 84)
+        state = get_state(obs)
+        assert state.size() == (1, 4, 84, 84), logger.error(f"state is unexpected size: {state.size()}")
         total_reward = 0.0
-        for _ in count():
+        for steps in count():
             done, total_reward, state = self.run_step(state, total_reward)
-            if self.steps % ACTOR_UPDATE_INTERVAL == 0:
+            if self.total_steps % ACTOR_UPDATE_INTERVAL == 0:
                 self.update_params()
             if done:
                 break
-        self.epoch += 1
+        # noinspection PyUnboundLocalVariable
+        self.history.append(HistoryElement(steps, total_reward))
 
     def run_step(self, state, total_reward):
-        self.steps += 1
+        self.total_steps += 1
 
         action = self.select_action(state)
         self.dispatch_render()
@@ -312,7 +317,7 @@ class Actor:
         else:
             next_state = None
         if not args.test:
-            self.memory_queue.put(Transition(self.id, self.steps, state, action, next_state, reward))
+            self.memory_queue.put(Transition(self.id, self.total_steps, state, action, next_state, reward))
             logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after put')
         return done, total_reward, next_state
 
@@ -334,12 +339,13 @@ class Actor:
 
     @property
     def epsilon(self):
+        # todo: parameterize so that each actor can explore at different rates
         if STEPSDECAY:
             eps_threshold = EPS_END + (EPS_START - EPS_END) * \
-                            math.exp(-1. * self.steps / 1000000)
+                            math.exp(-1. * self.total_steps / 1000000)
         else:
             eps_threshold = EPS_END + (EPS_START - EPS_END) * \
-                            math.exp(-1. * self.epoch / EPS_DECAY)
+                            math.exp(-1. * self.episode / EPS_DECAY)
         return eps_threshold
 
     def select_soft_action(self, state) -> int:
@@ -352,6 +358,16 @@ class Actor:
             a = c.sample()
         return a.item()
 
+    def log_checkpoint(self, interval):
+        if self.episode % interval:
+            avg_reward = sum([h[0] for h in self.history[-interval:]]) / interval
+            avg_steps = int(sum([h[1] for h in self.history[-interval:]]) / interval)
+            logger.info(f'Actor: {self.id:<3}\t'
+                        f'Total steps: {self.total_steps:<9}\t'
+                        f'Episode: {self.episode:<5}\t'
+                        f'Avg reward: {avg_reward:.2f}\t'
+                        f'Avg steps: {avg_steps}')
+
     def dispatch_render(self):
         if self.render_mode:
             self.env.render(mode=self.render_mode, save_dir=args.store_dir)
@@ -361,8 +377,8 @@ class Actor:
         """
         If `render_mode` set to 'png', convert stored images to a video.
         """
-        # todo: account for multiple agents writing to the same place
-        save_dir = os.path.join(args.store_dir, 'video')
+        # todo: test this functionality, and also that of storing the png images
+        save_dir = os.path.join(args.store_dir, f'actor{self.id}', 'video')
         if self.render_mode == 'png':
             convert_images_to_video(image_dir=save_dir, save_dir=os.path.dirname(save_dir))
             shutil.rmtree(args.save_dir)
@@ -396,34 +412,32 @@ def memory_encoder(memory_queue, replay_in_queue):
     """
     logger.debug("Memory encoder process started")
     while True:
-        if not memory_queue.empty():
-            actor_id, step_number, state, action, next_state, reward = memory_queue.get()
-            logger.debug(f'memory_queue length: {memory_queue.qsize()} after get')
-            assert isinstance(state, torch.Tensor), breakpoint()
-            assert isinstance(next_state, (torch.Tensor, type(None))), breakpoint()
-            assert isinstance(action, int), breakpoint()
-            assert isinstance(reward, (int, float)), breakpoint()
+        actor_id, step_number, state, action, next_state, reward = memory_queue.get()
+        logger.debug(f'memory_queue length: {memory_queue.qsize()} after get')
+        assert isinstance(state, torch.Tensor), logger.error(f"state must be a Tensor, not {type(state)}")
+        assert isinstance(next_state, (torch.Tensor, type(None))), \
+            logger.error(f"next_state must be a Tensor or None, not{type(next_state)}")
+        assert isinstance(action, int), logger.error(f"action must be an integer, not {type(action)}")
+        assert isinstance(reward, (int, float)), logger.error(f"reward must be a float, not {type(reward)}")
 
-            state = state.squeeze().numpy()
+        state = state.squeeze().numpy()
+        if next_state is not None:
+            next_state = next_state.squeeze().numpy()
+
+        png_next_state = None
+        if state.ndim == 2:
+            png_state = io.BytesIO()
+            png_next_state = io.BytesIO()
+            Image.fromarray(state).save(png_state, format='png')
             if next_state is not None:
-                next_state = next_state.squeeze().numpy()
-
-            png_next_state = None
-            if state.ndim == 2:
-                png_state = io.BytesIO()
-                png_next_state = io.BytesIO()
-                Image.fromarray(state).save(png_state, format='png')
-                if next_state is not None:
-                    Image.fromarray(next_state).save(png_next_state, format='png')
-            else:
-                png_state = encode_stacked_frames(state)
-                if next_state is not None:
-                    png_next_state = encode_stacked_frames(next_state)
-
-            replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
-            logger.debug(f'replay_in_queue length: {replay_in_queue.qsize()} after put')
+                Image.fromarray(next_state).save(png_next_state, format='png')
         else:
-            time.sleep(0.1)
+            png_state = encode_stacked_frames(state)
+            if next_state is not None:
+                png_next_state = encode_stacked_frames(next_state)
+
+        replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
+        logger.debug(f'replay_in_queue length: {replay_in_queue.qsize()} after put')
 
 
 def encode_stacked_frames(state) -> List[io.BytesIO]:
@@ -452,27 +466,32 @@ def memory_decoder(sample_queue, replay_out_queue):
 
     transform = transforms.ToTensor()
     while True:
-        if not replay_out_queue.empty():
-            batch = replay_out_queue.get()
-            logger.debug(f'replay_out_queue length: {replay_out_queue.qsize()} after get')
+        batch = replay_out_queue.get()
+        logger.debug(f'replay_out_queue length: {replay_out_queue.qsize()} after get')
 
-            next_state = None
-            decoded_batch = []
-            for transition in batch:
-                actor_id, step_number, png_state, action, png_next_state, reward = transition
-                if isinstance(png_state, list):
-                    state = decode_stacked_frames(png_state)
-                    if png_next_state is not None:
-                        next_state = decode_stacked_frames(png_next_state)
-                else:
-                    state = transform(Image.open(png_state)).to(DEVICE)
-                    if png_next_state is not None:
-                        next_state = transform(Image.open(png_next_state)).to(DEVICE)
-                decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
-            sample_queue.put(decoded_batch)
-            logger.debug(f'sample_queue length: {sample_queue.qsize()} after put')
-        else:
-            time.sleep(0.1)
+        next_state = None
+        decoded_batch = []
+        for transition in batch:
+            actor_id, step_number, png_state, action, png_next_state, reward = transition
+            if isinstance(png_state, list):
+                state = decode_stacked_frames(png_state)
+                if png_next_state is not None:
+                    next_state = decode_stacked_frames(png_next_state)
+            else:
+                state = transform(Image.open(png_state)).to(DEVICE)
+                if png_next_state is not None:
+                    next_state = transform(Image.open(png_next_state)).to(DEVICE)
+            decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
+
+        batch, actions, rewards = process_transitions(decoded_batch)
+        non_final_mask, non_final_next_states = mask_non_final(batch)
+        action_batch, reward_batch, state_batch = separate_batches(actions, batch, rewards)
+        processed_batch = ProcessedBatch(action_batch, reward_batch, state_batch,
+                                         non_final_mask, non_final_next_states,
+                                         idxs=None, weights=None)
+
+        sample_queue.put(processed_batch)
+        logger.debug(f'sample_queue length: {sample_queue.qsize()} after put')
 
 
 class Replay:
@@ -484,6 +503,7 @@ class Replay:
                     /              \
     threads     push_worker   sample_worker
     """
+
     def __init__(self, replay_in_queue, replay_out_queue, mode='default'):
         """
 
@@ -525,10 +545,8 @@ class Replay:
     def push_worker(self):
         logger.debug("Replay memory push worker started")
         while True:
-            memory = self.replay_in_queue.get()  # blocks if the queue is empty
+            self.memory.append(self.replay_in_queue.get())
             logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after get')
-            self.memory.append(memory)
-            logger.debug(f"replay length: {len(self.memory)}")
 
     def sample_worker(self):
         logger.debug("Replay memory sample worker started")
@@ -537,13 +555,6 @@ class Replay:
                 batch = random.sample(self.memory, BATCH_SIZE)
                 self.replay_out_queue.put(batch)  # blocks if the queue is full
                 logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
-
-
-def log_checkpoint(epoch, history, steps):
-    avg_reward = sum([h[0] for h in history[-LOG_INTERVAL:]]) / LOG_INTERVAL
-    avg_steps = int(sum([h[1] for h in history[-LOG_INTERVAL:]]) / LOG_INTERVAL)
-    logger.info(f'Total steps: {steps_done}\tEpisode: {epoch}/{steps}\tAvg reward: {avg_reward:.2f}\t'
-                f'Avg steps: {avg_steps}')
 
 
 def display_state(state: torch.Tensor):
@@ -558,23 +569,6 @@ def display_state(state: torch.Tensor):
     for img, ax in zip(np_state, axs):
         ax.imshow(img, cmap='gray')
     fig.show()
-
-
-def get_logger(store_dir):
-    log_path = os.path.join(store_dir, 'output.log')
-    logger = logging.Logger('train_status', level=logging.DEBUG)
-
-    stdout_handler = logging.StreamHandler()
-    stdout_handler.setFormatter(logging.Formatter('%(levelname)s | %(processName)s: %(process)d | %(threadName)s | %(message)s'))
-
-    # todo: logging to file from multiple processes not supported:
-    # https://docs.python.org/3/howto/logging-cookbook.html#logging-to-a-single-file-from-multiple-processes
-    # file_handler = logging.FileHandler(log_path)
-    # file_handler.setFormatter(logging.Formatter('%(asctime)s\t%(levelname)s\t%(message)s'))
-    #
-    # logger.addHandler(file_handler)
-    logger.addHandler(stdout_handler)
-    return logger
 
 
 def dispatch_make_env():
@@ -746,36 +740,34 @@ def main():
     create_storage_dir()
 
     # hyperparameters
-    # todo: restore correct arguments after debugging
-    # BATCH_SIZE = args.batch_size
-    BATCH_SIZE = 3
+    BATCH_SIZE = args.batch_size
     GAMMA = 0.99
     EPS_START = 1
     EPS_END = 0.02
     EPS_DECAY = args.epsdecay
     TARGET_UPDATE = 1000
     LR = args.learning_rate
-    # INITIAL_MEMORY = args.replay // 10
-    INITIAL_MEMORY = 10
+    INITIAL_MEMORY = args.replay // 10
     MEMORY_SIZE = args.replay
     DOUBLE = args.double
     STEPSDECAY = args.stepsdecay
     PRIORITY = args.priority
 
-    # number episodes between logging and saving
-    LOG_INTERVAL = 20
-    CHECKPOINT_INTERVAL = 100
+    LOG_INTERVAL = 20  # number of episodes between logging
+    CHECKPOINT_INTERVAL = 100  # number of epochs between storing a checkpoint
 
     ARCHITECTURE = args.network
     PRETRAIN = args.pretrain
 
-    logger = get_logger(args.store_dir)
+    logger, logger_thread = get_logger(args.store_dir)
+    logger_thread.start()
     logger.info(get_args_status_string(parser, args))
     logger.info(f'Device: {DEVICE}')
 
     # Get shared objects
     model = initialize_model()
     """
+    Memory and sampling pipeline
     Actor -> memory_queue
                         |  
     Encoder             +-> replay_in_queue
@@ -792,13 +784,14 @@ def main():
         get_communication_objects()
 
     # Create subprocesses
+    # todo: try multiple actors
     actor = Actor(model=model, n_episodes=args.episodes, render_mode=args.render, memory_queue=memory_queue,
-                  event=param_update_request, params_in=pipe_in)
+                  load_params_event=param_update_request, params_in=pipe_in)
     png_encoder_proc = mp.Process(target=memory_encoder, args=(memory_queue, replay_in_queue), name='PNG Encoder')
     png_decoder_proc = mp.Process(target=memory_decoder, args=(sample_queue, replay_out_queue), name='PNG Decoder')
     replay = Replay(replay_in_queue, replay_out_queue)
     learner = Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, event=param_update_request,
-                      params_out=pipe_out)
+                      params_out=pipe_out, batch_size=BATCH_SIZE)
 
     # Start subprocesses
     actor.start()
@@ -807,28 +800,28 @@ def main():
     png_decoder_proc.start()
     learner.start()
 
-    # enumerate threads
-    logger.debug('Initial Threads: ' + ' - '.join([t.name for t in threading.enumerate()]))
-    time.sleep(10)
-    logger.debug('Threads after 10s: ' + ' - '.join([t.name for t in threading.enumerate()]))
-
-    # Join subprocess. actor is the only one that is not infinite.
-    actor.join()
-    logger.info("All actors finished")
-    png_encoder_proc.terminate()
-    png_decoder_proc.terminate()
-    del replay
-    del learner
-    png_encoder_proc.join()
-    png_decoder_proc.join()
+    try:
+        # Join subprocess. actor is the only one that is not infinite.
+        actor.join()
+        logger.info("All actors finished")
+    except KeyboardInterrupt:
+        del actor
+    finally:
+        logger.info("terminating PNG Encoder")
+        png_encoder_proc.terminate()
+        logger.info("terminating PNG Decoder")
+        png_decoder_proc.terminate()
+        del replay
+        del learner
+        png_encoder_proc.join()
+        png_decoder_proc.join()
 
 
 def get_communication_objects():
-    # todo: change queue sizes when done debugging
-    memory_queue = mp.Queue(maxsize=10)
-    replay_in_queue = mp.Queue(maxsize=10)
-    replay_out_queue = mp.Queue(maxsize=3)
-    sample_queue = mp.Queue(maxsize=3)
+    memory_queue = mp.Queue(maxsize=1000)
+    replay_in_queue = mp.Queue(maxsize=1000)
+    replay_out_queue = mp.Queue(maxsize=100)
+    sample_queue = mp.Queue(maxsize=100)
 
     param_update_request = mp.Event()
     pipe_in, pipe_out = mp.Pipe()

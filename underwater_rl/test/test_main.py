@@ -192,7 +192,7 @@ class TestActor(unittest.TestCase):
         model = main.initialize_model()
         memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects()
         self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
-                                event=param_update_request, params_in=params_in)
+                                load_params_event=param_update_request, params_in=params_in)
 
         obs = self.actor.env.reset()
         self.state = main.get_state(obs)
@@ -222,7 +222,7 @@ class TestActor(unittest.TestCase):
 
     def test_epsilon_is_minimum_at_infinite_episodes_and_steps_steps_decay(self):
         main.STEPSDECAY = True
-        self.actor.steps = math.inf
+        self.actor.total_steps = math.inf
         eps = self.actor.epsilon
         self.assertEqual(main.EPS_END, eps)
 
@@ -274,7 +274,7 @@ class TestLearner(unittest.TestCase):
         model = main.initialize_model()
         _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects()
         self.learner = main.Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue,
-                                    event=param_update_request, params_out=params_out)
+                                    event=param_update_request, params_out=params_out, batch_size=BATCH_SIZE)
 
     def tearDown(self) -> None:
         del self.learner
