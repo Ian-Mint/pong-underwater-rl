@@ -54,7 +54,7 @@ def populate_cmd(template, options):
 
     if args.ephemeral:
         return template.format(user=args.user, branch=args.branch, options=options, job_name=job_name,
-                               git_email=args.git_email, git_user=args.git_user, git_password=args.git_password)
+                               git_email=args.git_email)
     else:
         return template.format(user=args.user, branch=args.branch, options=options)
 
@@ -74,18 +74,13 @@ if __name__ == '__main__':
                         help="Use ephemeral storage. Requires setting git options to store results")
     parser.add_argument('--job-name', dest='job_name', help="override automatically generated job name")
     parser.add_argument('--git-email', dest='git_email', help="email to use with commit")
-    parser.add_argument('--git-user', dest='git_user', help="your GitHub username")
-    parser.add_argument('--git-password', dest='git_password', help="your GitHub password. Use at your own risk.")
     parser.add_argument('-p', '--preview', action='store_true', help="Preview the created job file without running it")
     parser.add_argument('-cp', '--command-preview', dest='command_preview', action='store_true',
                         help="Preview the main.py command(s)")
     args = parser.parse_args()
     if args.ephemeral:
-        if args.git_email is None or args.git_user is None or args.git_password is None:
-            parser.error("--ephemeral requires --git-email, --git-user and --git-password.")
-        # escape special characters
-        args.git_password = urllib.parse.quote(args.git_password)
-        args.git_user = urllib.parse.quote(args.git_user)
+        if args.git_email:
+            parser.error("--ephemeral requires --git-email.")
 
     if not isinstance(args.file, list):
         args.file = [args.file]

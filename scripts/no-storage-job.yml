@@ -22,7 +22,7 @@ spec:
           git config --global user.email ${git_email};
           git add --all;
           git commit -m \"ex: ${job_name}\";
-          git push https://${git_user}:{git_password}@github.com/Ian-Mint/pong-underwater-rl.git;"
+          git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Ian-Mint/pong-underwater-rl.git"
         volumeMounts:
         - mountPath: /ephemeral
           name: ephemeral
@@ -39,6 +39,17 @@ spec:
             nvidia.com/gpu: "1"
             cpu: "1"
             ephemeral-storage: 20Gi
+      env:
+      - name: GIT_USERNAME
+        valueFrom:
+          secretKeyRef:
+            name: github
+            key: gituser
+      - name: GIT_PASSWORD
+        valueFrom:
+          secretKeyRef:
+            name: github
+            key: gitpassword
       restartPolicy: Never
       volumes:
         - name: ephemeral
