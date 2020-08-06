@@ -128,7 +128,7 @@ class Learner:
         while True:
             if self.event.is_set():
                 # todo: investigate whether this data could be corrupted if it is written at the same time it is read
-                self.params_out.send(self.policy.state_dict())
+                self.params_out.send(deepcopy(self.policy.state_dict()))
                 self.event.clear()
             else:
                 time.sleep(0.01)
@@ -973,7 +973,7 @@ def get_communication_objects():
     memory_queue = mp.Queue(maxsize=1000)
     replay_in_queue = mp.Queue(maxsize=1000)
     replay_out_queue = mp.Queue(maxsize=100)
-    sample_queue = mp.Queue(maxsize=100)
+    sample_queue = mp.Queue(maxsize=10)
 
     param_update_request = mp.Event()
     pipe_in, pipe_out = mp.Pipe()
