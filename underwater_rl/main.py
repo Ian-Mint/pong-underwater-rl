@@ -468,7 +468,7 @@ def wait_event_not_set(event, timeout=None):
         raise TimeoutError
 
 
-def memory_encoder(memory_queue, replay_in_queue, log_queue, compress=False):
+def memory_encoder(memory_queue: mp.Queue, replay_in_queue: mp.Queue, log_queue: mp.Queue, compress=False):
     """
     Encoder worker to be run alongside Actors
     :param replay_in_queue:
@@ -675,15 +675,16 @@ class Replay:
     def sample_worker(self):
         self.logger.debug("Replay memory sample worker started")
         while True:
-            if len(self.memory) >= self.initial_memory:
+            with self.lock:
+                memory_length = len(self.memory)
+            if memory_length >= self.initial_memory:
                 with self.lock:
                     batch = random.sample(self.memory, self.batch_size)
                 self.replay_out_queue.put(batch)  # blocks if the queue is full
                 self.logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
             else:
                 time.sleep(1)
-                with self.lock:
-                    self.logger.debug(f'memory length: {len(self.memory)}')
+                self.logger.debug(f'memory length: {memory_length}')
 
 
 def display_state(state: torch.Tensor):
