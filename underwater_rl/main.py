@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import io
-import logging
 import math
+import logging
+from logging.handlers import QueueHandler
+# todo: use torch.multiprocessing: https://pytorch.org/docs/stable/multiprocessing.html#module-torch.multiprocessing
 import multiprocessing as mp
 import os
 import pickle
@@ -14,7 +16,7 @@ import time
 from collections import namedtuple, deque
 from copy import deepcopy
 from itertools import count
-from typing import Union, List
+from typing import Union, List, Dict
 
 import gym
 import numpy as np
@@ -44,6 +46,9 @@ except ImportError:
 MEMORY_BATCH_SIZE = 100
 N_ACTIONS = 3
 ACTOR_UPDATE_INTERVAL = 1000
+LOG_INTERVAL = 20  # number of episodes between logging
+CHECKPOINT_INTERVAL = 100  # number of epochs between storing a checkpoint
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 # warnings.filterwarnings("ignore", category=UserWarning)
 Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward'))
@@ -52,22 +57,46 @@ ProcessedBatch = namedtuple(
 HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
 
 
+def get_logger_from_thread(log_queue):
+    logger = logging.getLogger()
+    logger.addHandler(QueueHandler(log_queue))
+    logger.setLevel(logging.DEBUG)
+    return logger
+
+
 class Learner:
-    def __init__(self, optimizer, model, sample_queue: mp.Queue, event: mp.Event, params_out: mp.connection.Connection,
-                 batch_size: int):
+    def __init__(self,
+                 optimizer,
+                 model,
+                 sample_queue: mp.Queue,
+                 event: mp.Event,
+                 params_out: mp.connection.Connection,
+                 checkpoint_path: str,
+                 log_queue: mp.Queue,
+                 learning_params: Dict[str, Union[float, int]]):
         if not isinstance(model, DQN):
+            # todo: allow other kinds of models
             raise NotImplementedError("Only DQN models are implemented for now")
 
         # todo: currently, batch_size does not control the batch size. It is only used for calculating total samples
         self.sample_queue = sample_queue
         self.event = event
         self.params_out = params_out
-        self.batch_size = batch_size
+        self.log_queue = log_queue
+
+        self.checkpoint_path = checkpoint_path
+        self.batch_size = learning_params['batch_size']
+        self.gamma = learning_params['gamma']
+        self.learning_rate = learning_params['learning_rate']
+        self.prioritized = learning_params['prioritized']
+        self.double = learning_params['double']
+        self.architecture = learning_params['architecture']
 
         self.policy = deepcopy(model)
         self.target = deepcopy(model)
-        self.optimizer = optimizer(self.policy.parameters(), lr=LR)
+        self.optimizer = optimizer(self.policy.parameters(), lr=self.learning_rate)
 
+        self.logger = None
         self.loss = None
         self.epoch = 0
 
@@ -78,36 +107,41 @@ class Learner:
         self.terminate()
 
     def terminate(self):
-        logger.debug("Learner terminating")
         self.proc.terminate()
         self.proc.join()
 
     def start(self):
         self.proc.start()
-        logger.debug("Learner process started")
 
     def main_worker(self):
+        self.logger = get_logger_from_thread(self.log_queue)
+        param_update_thread = threading.Thread(target=self.update_actors, daemon=True)
+        param_update_thread.start()
+
         for self.epoch in count(1):
             self.optimize_model()
             self.update_target_net()
-            self.update_actors()
             if self.epoch % CHECKPOINT_INTERVAL:
                 self.save_checkpoint()
 
     def update_actors(self):
-        if self.event.is_set():
-            self.params_out.send(self.policy.state_dict())
-            self.event.clear()
+        while True:
+            if self.event.is_set():
+                # todo: investigate whether this data could be corrupted if it is written at the same time it is read
+                self.params_out.send(self.policy.state_dict())
+                self.event.clear()
+            else:
+                time.sleep(0.01)
 
     def optimize_model(self):
         action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
 
         state_action_values = self.forward_policy(action_batch, state_batch)
         next_state_values = self.forward_target(non_final_mask, non_final_next_states)
-        expected_state_action_values = (next_state_values * GAMMA) + reward_batch.float()
+        expected_state_action_values = (next_state_values * self.gamma) + reward_batch.float()
 
-        self.loss = get_loss(state_action_values, expected_state_action_values, idxs, weights)
-        logger.debug(f"loss norm: {self.loss.norm()}")
+        self.loss = self.get_loss(state_action_values, expected_state_action_values, idxs, weights)
+        self.logger.debug(f"loss norm: {self.loss.norm()}")
         self.step_optimizer()
 
     def optimize_lstm(self):
@@ -118,9 +152,9 @@ class Learner:
 
         state_action_values = self.forward_policy(action_batch, state_batch)
         next_state_values = self.forward_target(non_final_mask, non_final_next_states)
-        expected_state_action_values = (next_state_values * GAMMA) + reward_batch.float()
+        expected_state_action_values = (next_state_values * self.gamma) + reward_batch.float()
 
-        self.loss = get_loss(state_action_values, expected_state_action_values, idxs, weights)
+        self.loss = self.get_loss(state_action_values, expected_state_action_values, idxs, weights)
         self.step_optimizer()
 
     def optimize_distributional(self):
@@ -133,19 +167,19 @@ class Learner:
         next_distr_v, next_qvals_v = self.target.both(next_states_v)
         next_actions = next_qvals_v.max(1)[1].data.cpu().numpy()
         next_distr = self.target.apply_softmax(next_distr_v).data.cpu().numpy()
-        next_best_distr = next_distr[range(BATCH_SIZE), next_actions]
+        next_best_distr = next_distr[range(self.batch_size), next_actions]
         dones = dones.astype(np.bool)
         # project our distribution using Bellman update
         proj_distr = distr_projection(next_best_distr, reward_batch.cpu().numpy(), dones,
-                                      self.policy.Vmin, self.policy.Vmax, self.policy.atoms, GAMMA)
+                                      self.policy.Vmin, self.policy.Vmax, self.policy.atoms, self.gamma)
         # calculate net output
         distr_v = self.policy(state_batch)
-        state_action_values = distr_v[range(BATCH_SIZE), action_batch.view(-1)]
+        state_action_values = distr_v[range(self.batch_size), action_batch.view(-1)]
         state_log_sm_v = F.log_softmax(state_action_values, dim=1)
         proj_distr_v = torch.tensor(proj_distr).to(DEVICE)
         entropy = (-state_log_sm_v * proj_distr_v).sum(dim=1)
 
-        if PRIORITY:  # KL divergence based priority
+        if self.prioritized:  # KL divergence based priority
             raise NotImplementedError("Prioritized replay not implemented")
         else:
             self.loss = entropy.mean()
@@ -153,11 +187,11 @@ class Learner:
         self.step_optimizer()
 
     def sample(self) -> ProcessedBatch:
-        if PRIORITY:
+        if self.prioritized:
             raise NotImplementedError("Prioritized replay not yet implemented")
         else:
             processed_batch = self.sample_queue.get()
-            logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after get')
+            self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after get')
 
         return processed_batch
 
@@ -165,14 +199,14 @@ class Learner:
         return self.policy(state_batch).gather(1, action_batch)
 
     def forward_target(self, non_final_mask, non_final_next_states):
-        next_state_values = torch.zeros(BATCH_SIZE, device=DEVICE)
-        if DOUBLE:
+        next_state_values = torch.zeros(self.batch_size, device=DEVICE)
+        if self.double:
             argmax_a_q_sp = self.policy(non_final_next_states).max(1)[1]
             q_sp = self.target(non_final_next_states).detach()
             # noinspection PyTypeChecker
             next_state_values[non_final_mask] = q_sp[
                 torch.arange(torch.sum(non_final_mask), device=DEVICE), argmax_a_q_sp]
-        elif ARCHITECTURE == 'soft_dqn':
+        elif self.architecture == 'soft_dqn':
             raise NotImplementedError("soft DQN is not yet implemented")
         else:
             next_state_values[non_final_mask] = self.target(non_final_next_states).max(1)[0].detach()
@@ -183,6 +217,13 @@ class Learner:
         self.loss.backward()
         self.optimizer.step()
 
+    def get_loss(self, state_action_values, expected_state_action_values, idxs, weights):
+        if self.prioritized:  # TD error based priority
+            raise NotImplementedError("Prioritized replay not implemented")
+        else:
+            loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
+        return loss
+
     def update_target_net(self):
         self.target.load_state_dict(self.policy.state_dict())
 
@@ -192,7 +233,7 @@ class Learner:
              'optimizer_state': self.optimizer.state_dict(),
              'samples_processed': self.epoch * self.batch_size,
              'epoch': self.epoch},
-            os.path.join(args.store_dir, 'dqn'))
+            os.path.join(self.checkpoint_path))
 
 
 def separate_batches(actions, batch, rewards):
@@ -223,19 +264,20 @@ def get_state(obs):
     return state.unsqueeze(0)
 
 
-def get_loss(state_action_values, expected_state_action_values, idxs, weights):
-    if PRIORITY:  # TD error based priority
-        raise NotImplementedError("Prioritized replay not implemented")
-    else:
-        loss = F.smooth_l1_loss(state_action_values, expected_state_action_values.unsqueeze(1))
-    return loss
-
-
 class Actor:
     counter = 0
 
-    def __init__(self, model: nn.Module, n_episodes: int, render_mode: Union[str, bool], memory_queue: mp.Queue,
-                 load_params_event: mp.Event, params_in: mp.connection.Connection):
+    def __init__(self,
+                 model: nn.Module,
+                 n_episodes: int,
+                 render_mode: Union[str, bool],
+                 memory_queue: mp.Queue,
+                 load_params_event: mp.Event,
+                 params_in: mp.connection.Connection,
+                 global_args: argparse.Namespace,
+                 log_queue: mp.Queue,
+                 actor_params: Dict[str, Union[int, float]],
+                 image_dir: str = None):
         """
         Main training loop
 
@@ -243,18 +285,35 @@ class Actor:
         :param params_in:
         :param n_episodes: Number of episodes over which to train or test
         :param render_mode: How and whether to visibly render states
+        :param memory_queue: The queue that experiences are put in for storage
+        :param load_params_event: Event used to trigger parameter update
+        :param params_in: Pipe for receiving parameter update
+        :param global_args: The namespace returned bye the global argument parser
+        :param log_queue: Queue used to pass logging information to a handler
+        :param actor_params: dictionary of parameters used to determine actor behavior
+        :param image_dir: required if render_mode is not False
         """
         self.params_in = params_in
         self.load_params_event = load_params_event
         self.memory_queue = memory_queue
-        self.env = dispatch_make_env()
+        self.log_queue = log_queue
+        self.env = dispatch_make_env(global_args)
         self.policy = deepcopy(model)
         self.render_mode = render_mode
         self.n_episodes = n_episodes
+        self.image_dir = image_dir
+
+        self.test_mode = global_args.test
+        self.architecture = actor_params['architecture']
+        self.steps_decay = actor_params['steps_decay']
+        self.eps_decay = actor_params['eps_decay']
+        self.eps_end = actor_params['eps_end']
+        self.eps_start = actor_params['eps_start']
 
         self.id = self.counter
         type(self).counter += 1
 
+        self.logger = None
         self.episode = 0
         self.total_steps = 0
         self.history = []
@@ -262,7 +321,6 @@ class Actor:
         self.proc = mp.Process(target=self.main_worker, name=f"Actor-{self.id}")
 
     def __del__(self):
-        logger.debug(f"Actor-{self.id} terminating")
         if self.proc.pid is not None:
             self.proc.terminate()
             self.proc.join()
@@ -272,29 +330,30 @@ class Actor:
 
     def start(self):
         self.proc.start()
-        logger.debug(f"Actor-{self.id} started")
 
     def main_worker(self):
+        self.logger = get_logger_from_thread(self.log_queue)
+        self.logger.debug(f"Actor-{self.id} started")
         for self.episode in range(1, self.n_episodes + 1):
             self.run_episode()
-            logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
+            self.logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
             self.log_checkpoint(interval=LOG_INTERVAL)
         self.env.close()
         self.finish_rendering()
-        logger.info(f"Actor-{self.id} done")
+        self.logger.info(f"Actor-{self.id} done")
 
     def update_params(self):
+        self.logger.debug(f"Actor-{self.id} updating params")
         self.load_params_event.set()
         wait_event_not_set(self.load_params_event, timeout=None)
-        logger.debug(f"params in:")
         params = self.params_in.recv()
         self.policy.load_state_dict(params)
-        logger.debug(f"Actor-{self.id} params updated")
+        self.logger.debug(f"Actor-{self.id} params updated")
 
     def run_episode(self):
         obs = self.env.reset()
         state = get_state(obs)
-        assert state.size() == (1, 4, 84, 84), logger.error(f"state is unexpected size: {state.size()}")
+        assert state.size() == (1, 4, 84, 84), self.logger.error(f"state is unexpected size: {state.size()}")
         total_reward = 0.0
         for steps in count():
             done, total_reward, state = self.run_step(state, total_reward)
@@ -316,13 +375,13 @@ class Actor:
             next_state = get_state(obs)
         else:
             next_state = None
-        if not args.test:
+        if not self.test_mode:
             self.memory_queue.put(Transition(self.id, self.total_steps, state, action, next_state, reward))
-            logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after put')
+            self.logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after put')
         return done, total_reward, next_state
 
     def select_action(self, state):
-        if ARCHITECTURE == 'soft_dqn':
+        if self.architecture == 'soft_dqn':
             return self.select_soft_action(state)
         else:
             return self.select_e_greedy_action(state)
@@ -330,7 +389,7 @@ class Actor:
     def select_e_greedy_action(self, state) -> int:
         if random.random() > self.epsilon:
             with torch.no_grad():
-                if ARCHITECTURE == 'distribution_dqn':
+                if self.architecture == 'distribution_dqn':
                     return (self.policy.qvals(state.to(DEVICE))).argmax().item()
                 else:
                     return self.policy(state.to(DEVICE)).max(1)[1].item()
@@ -340,12 +399,12 @@ class Actor:
     @property
     def epsilon(self):
         # todo: parameterize so that each actor can explore at different rates
-        if STEPSDECAY:
-            eps_threshold = EPS_END + (EPS_START - EPS_END) * \
+        if self.steps_decay:
+            eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * \
                             math.exp(-1. * self.total_steps / 1000000)
         else:
-            eps_threshold = EPS_END + (EPS_START - EPS_END) * \
-                            math.exp(-1. * self.episode / EPS_DECAY)
+            eps_threshold = self.eps_end + (self.eps_start - self.eps_end) * \
+                            math.exp(-1. * self.episode / self.eps_decay)
         return eps_threshold
 
     def select_soft_action(self, state) -> int:
@@ -359,18 +418,18 @@ class Actor:
         return a.item()
 
     def log_checkpoint(self, interval):
-        if self.episode % interval:
-            avg_reward = sum([h[0] for h in self.history[-interval:]]) / interval
-            avg_steps = int(sum([h[1] for h in self.history[-interval:]]) / interval)
-            logger.info(f'Actor: {self.id:<3}\t'
-                        f'Total steps: {self.total_steps:<9}\t'
-                        f'Episode: {self.episode:<5}\t'
-                        f'Avg reward: {avg_reward:.2f}\t'
-                        f'Avg steps: {avg_steps}')
+        # todo: if self.episode % interval:
+        avg_reward = sum([h.total_reward for h in self.history[-interval:]]) / interval
+        avg_steps = int(sum([h.n_steps for h in self.history[-interval:]]) / interval)
+        self.logger.info(f'Actor: {self.id:<3}\t'
+                         f'Total steps: {self.total_steps:<9}\t'
+                         f'Episode: {self.episode:<5}\t'
+                         f'Avg reward: {avg_reward:.2f}\t'
+                         f'Avg steps: {avg_steps}')
 
     def dispatch_render(self):
         if self.render_mode:
-            self.env.render(mode=self.render_mode, save_dir=args.store_dir)
+            self.env.render(mode=self.render_mode, save_dir=self.image_dir)
             time.sleep(0.02)
 
     def finish_rendering(self):
@@ -378,10 +437,9 @@ class Actor:
         If `render_mode` set to 'png', convert stored images to a video.
         """
         # todo: test this functionality, and also that of storing the png images
-        save_dir = os.path.join(args.store_dir, f'actor{self.id}', 'video')
         if self.render_mode == 'png':
-            convert_images_to_video(image_dir=save_dir, save_dir=os.path.dirname(save_dir))
-            shutil.rmtree(args.save_dir)
+            convert_images_to_video(image_dir=self.image_dir, save_dir=os.path.dirname(self.image_dir))
+            shutil.rmtree(self.image_dir)
 
 
 def wait_event_not_set(event, timeout=None):
@@ -404,12 +462,13 @@ def wait_event_not_set(event, timeout=None):
         raise TimeoutError
 
 
-def memory_encoder(memory_queue, replay_in_queue):
+def memory_encoder(memory_queue, replay_in_queue, log_queue):
     """
     Encoder worker to be run alongside Actors
     :param replay_in_queue:
     :param memory_queue:
     """
+    logger = get_logger_from_thread(log_queue)
     logger.debug("Memory encoder process started")
     while True:
         actor_id, step_number, state, action, next_state, reward = memory_queue.get()
@@ -458,10 +517,11 @@ def decode_stacked_frames(png_state: List[io.BytesIO]) -> torch.Tensor:
     return torch.stack(result).unsqueeze(0).to(DEVICE)
 
 
-def memory_decoder(sample_queue, replay_out_queue):
+def memory_decoder(sample_queue, replay_out_queue, log_queue):
     """
     Decoder worker to be run alongside Learner
     """
+    logger = get_logger_from_thread(log_queue)
     logger.debug("Memory decoder process started")
 
     transform = transforms.ToTensor()
@@ -504,57 +564,76 @@ class Replay:
     threads     push_worker   sample_worker
     """
 
-    def __init__(self, replay_in_queue, replay_out_queue, mode='default'):
+    def __init__(self, replay_in_queue, replay_out_queue, log_queue, params: Dict[str, Union[int, float]],
+                 mode='default'):
         """
 
-        :param replay_in_queue:
-        :param replay_out_queue:
+        :param replay_in_queue: The queue used to retrieve samples
+        :param replay_out_queue: The queue used to push samples
+        :param params: parameters controlling the replay memory behavior (length, etc.)
         :param mode: {'default', 'episodic'}
         """
+        # todo: implement episodic replay for use with LSTM
         if mode != 'default':
             raise NotImplementedError("Only default mode is currently implemented")
 
+        assert params['initial_memory'] <= params['memory_size'], \
+            "Initial replay memory set lower than total replay memory"
+
+        self.initial_memory = params['initial_memory']
+        self.batch_size = params['batch_size']
+
         self.replay_in_queue = replay_in_queue
         self.replay_out_queue = replay_out_queue
+        self.log_queue = log_queue
         self.mode = mode
-        self.memory = deque(maxlen=MEMORY_SIZE)
+        self.memory = deque(maxlen=params['memory_size'])
 
-        self.push_thread = threading.Thread(target=self.push_worker, daemon=True, name="Push")
-        # self.sample_thread = threading.Thread(target=self.sample_worker, daemon=True, name="Sample")
+        self.logger = None
+        self.push_thread = None  # can't pass Thread objects to a new process using spawn or forkserver
         self.proc = mp.Process(target=self.main_worker, name="Replay")
 
     def __del__(self):
         self.terminate()
 
     def terminate(self):
-        logger.debug("Replay terminating")
+        """
+        Main thread
+        """
         self.proc.terminate()
         self.proc.join()
 
     def start(self):
+        """
+        Main thread
+        """
         self.proc.start()
-        logger.debug("Replay process started")
 
     def main_worker(self):
         """
         Launch push thread and run push worker in the main thread.
         """
+        self.logger = get_logger_from_thread(self.log_queue)
+        self.logger.debug("Replay process started")
+
+        self.push_thread = threading.Thread(target=self.push_worker, daemon=True, name="Push")
         self.push_thread.start()
-        self.sample_worker()
+        self.sample_worker()  # run sample worker in the main thread
 
     def push_worker(self):
-        logger.debug("Replay memory push worker started")
+        self.logger.debug("Replay memory push worker started")
         while True:
-            self.memory.append(self.replay_in_queue.get())
-            logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after get')
+            sample = self.replay_in_queue.get()
+            self.memory.append(sample)
+            self.logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after get')
 
     def sample_worker(self):
-        logger.debug("Replay memory sample worker started")
+        self.logger.debug("Replay memory sample worker started")
         while True:
-            if len(self.memory) >= INITIAL_MEMORY:
-                batch = random.sample(self.memory, BATCH_SIZE)
+            if len(self.memory) >= self.initial_memory:
+                batch = random.sample(self.memory, self.batch_size)
                 self.replay_out_queue.put(batch)  # blocks if the queue is full
-                logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
+                self.logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
 
 
 def display_state(state: torch.Tensor):
@@ -562,7 +641,6 @@ def display_state(state: torch.Tensor):
     Displays the passed state using matplotlib
 
     :param state: torch.Tensor
-    :return:
     """
     np_state = state.numpy().squeeze()
     fig, axs = plt.subplots(1, len(np_state), figsize=(20, 5))
@@ -571,7 +649,12 @@ def display_state(state: torch.Tensor):
     fig.show()
 
 
-def dispatch_make_env():
+def dispatch_make_env(args):
+    """
+    Make a new pong environment
+
+    :param args: The namespace returned by argparse
+    """
     env = gym.make(
         "gym_dynamic_pong:dynamic-pong-v1",
         max_score=20,
@@ -596,23 +679,25 @@ def dispatch_make_env():
         state_type=args.state,
     )
 
-    if ARCHITECTURE == 'lstm':
+    if args.network == 'lstm':
         env = make_env(env, stack_frames=False, episodic_life=True, clip_rewards=True, max_and_skip=False)
     else:
         env = make_env(env, stack_frames=True, episodic_life=True, clip_rewards=True, max_and_skip=True)
     return env
 
 
-def initialize_model() -> nn.Module:
+def initialize_model(architecture) -> nn.Module:
     model_lookup = {'dqn': DQN,
                     'soft_dqn': softDQN,
                     'dueling_dqn': DuelingDQN,
                     'lstm': DRQN,
                     'distributional_dqn': DistributionalDQN}
-    return model_lookup[ARCHITECTURE](n_actions=N_ACTIONS).to(DEVICE)
+    return model_lookup[architecture](n_actions=N_ACTIONS).to(DEVICE)
 
 
 def load_checkpoint():
+    # todo: finish implementing this for the new architecture
+    logger = get_logger_from_thread(log_queue)
     logger.info("Loading the trained model")
     checkpoint = torch.load(args.checkpoint, map_location=DEVICE)
 
@@ -629,6 +714,7 @@ def load_checkpoint():
 
 
 def initialize_history():
+    # todo: finish implementing this for the new architecture
     global steps_done, epoch
     if args.resume:
         steps_done, epoch, history = load_checkpoint()
@@ -726,46 +812,49 @@ def get_parser():
     return parser
 
 
-def create_storage_dir():
-    if not os.path.exists(args.store_dir):
-        os.makedirs(args.store_dir)
+def create_storage_dir(dir):
+    """
+    Create directory `dir` if it does not exist
+    """
+    if not os.path.exists(dir):
+        os.makedirs(dir)
 
 
 def main():
-    global args, BATCH_SIZE, GAMMA, EPS_START, EPS_END, EPS_DECAY, TARGET_UPDATE, LR, INITIAL_MEMORY, MEMORY_SIZE, \
-        DOUBLE, STEPSDECAY, PRIORITY, LOG_INTERVAL, CHECKPOINT_INTERVAL, ARCHITECTURE, PRETRAIN, logger
-
     parser = get_parser()
     args = parser.parse_args()
-    create_storage_dir()
+    create_storage_dir(args.store_dir)
 
-    # hyperparameters
-    BATCH_SIZE = args.batch_size
-    GAMMA = 0.99
-    EPS_START = 1
-    EPS_END = 0.02
-    EPS_DECAY = args.epsdecay
-    TARGET_UPDATE = 1000
-    LR = args.learning_rate
-    INITIAL_MEMORY = args.replay // 10
-    MEMORY_SIZE = args.replay
-    DOUBLE = args.double
-    STEPSDECAY = args.stepsdecay
-    PRIORITY = args.priority
+    learning_params = {
+        'batch_size': args.batch_size,
+        'gamma': 0.99,
+        'learning_rate': args.learning_rate,
+        'prioritized': args.priority,
+        'double': args.double,
+        'architecture': args.network,
+    }
 
-    LOG_INTERVAL = 20  # number of episodes between logging
-    CHECKPOINT_INTERVAL = 100  # number of epochs between storing a checkpoint
+    actor_params = {
+        'test_mode': args.test,
+        'architecture': args.network,
+        'steps_decay': args.stepsdecay,
+        'eps_decay': args.epsdecay,
+        'eps_end': 0.02,
+        'eps_start': 1,
+    }
 
-    ARCHITECTURE = args.network
-    PRETRAIN = args.pretrain
+    replay_params = {
+        'memory_size': args.replay,
+        'initial_memory': args.replay,  # Wait for the memory buffer to fill before training
+        'batch_size': args.batch_size
+    }
 
-    logger, logger_thread = get_logger(args.store_dir)
-    logger_thread.start()
+    logger, log_queue = get_logger(args.store_dir)
     logger.info(get_args_status_string(parser, args))
     logger.info(f'Device: {DEVICE}')
 
     # Get shared objects
-    model = initialize_model()
+    model = initialize_model(args.network)
     """
     Memory and sampling pipeline
     Actor -> memory_queue
@@ -785,13 +874,28 @@ def main():
 
     # Create subprocesses
     # todo: try multiple actors
-    actor = Actor(model=model, n_episodes=args.episodes, render_mode=args.render, memory_queue=memory_queue,
-                  load_params_event=param_update_request, params_in=pipe_in)
-    png_encoder_proc = mp.Process(target=memory_encoder, args=(memory_queue, replay_in_queue), name='PNG Encoder')
-    png_decoder_proc = mp.Process(target=memory_decoder, args=(sample_queue, replay_out_queue), name='PNG Decoder')
-    replay = Replay(replay_in_queue, replay_out_queue)
-    learner = Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, event=param_update_request,
-                      params_out=pipe_out, batch_size=BATCH_SIZE)
+    actor = Actor(model=model,
+                  n_episodes=args.episodes,
+                  render_mode=args.render,
+                  memory_queue=memory_queue,
+                  load_params_event=param_update_request,
+                  params_in=pipe_in,
+                  global_args=args,
+                  log_queue=log_queue,
+                  actor_params=actor_params)
+    learner = Learner(optimizer=optim.Adam,
+                      model=model,
+                      sample_queue=sample_queue,
+                      event=param_update_request,
+                      params_out=pipe_out,
+                      checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
+                      log_queue=log_queue,
+                      learning_params=learning_params)
+    replay = Replay(replay_in_queue, replay_out_queue, log_queue, replay_params)
+    png_encoder_proc = mp.Process(target=memory_encoder, args=(memory_queue, replay_in_queue, log_queue),
+                                  name='PNG Encoder')
+    png_decoder_proc = mp.Process(target=memory_decoder, args=(sample_queue, replay_out_queue, log_queue),
+                                  name='PNG Decoder')
 
     # Start subprocesses
     actor.start()
@@ -828,8 +932,6 @@ def get_communication_objects():
     return memory_queue, pipe_in, pipe_out, param_update_request, replay_in_queue, replay_out_queue, sample_queue
 
 
-global args, BATCH_SIZE, GAMMA, EPS_START, EPS_END, EPS_DECAY, TARGET_UPDATE, LR, INITIAL_MEMORY, MEMORY_SIZE, \
-    DOUBLE, STEPSDECAY, PRIORITY, LOG_INTERVAL, CHECKPOINT_INTERVAL, ARCHITECTURE, PRETRAIN, logger
-
 if __name__ == '__main__':
+    mp.set_start_method('forkserver')
     main()

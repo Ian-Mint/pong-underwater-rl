@@ -4,6 +4,7 @@ import argparse
 import glob
 import multiprocessing as mp
 import logging
+import logging.config
 import logging.handlers
 import os
 import re
@@ -16,7 +17,7 @@ import numpy as np
 import torch
 
 
-def get_logger(store_dir) -> Tuple[logging.Logger, threading.Thread]:
+def get_logger(store_dir) -> Tuple[logging.Logger, mp.Queue]:
     def log_worker(q):
         while True:
             record = q.get()
@@ -25,26 +26,53 @@ def get_logger(store_dir) -> Tuple[logging.Logger, threading.Thread]:
             logger = logging.getLogger(record.name)
             logger.handle(record)
 
-    log_queue = mp.Queue()
+    base_log_path = os.path.join(store_dir, 'output.log')
+    debug_log_path = os.path.join(store_dir, 'debug.log')
+    d = {
+        'version': 1,
+        'formatters': {
+            'detailed': {
+                'class': 'logging.Formatter',
+                'format': '%(asctime)s %(levelname)-7s | %(processName)-14s: %(process)-5d | %(threadName)-14s | %(message)s'
+            },
+            'basic': {
+                'class': 'logging.Formatter',
+                'format': '%(asctime)s %(levelname)-7s | %(message)s'
+            }
+        },
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'level': 'INFO',
+            },
+            'info': {
+                'class': 'logging.FileHandler',
+                'filename': base_log_path,
+                'mode': 'a',
+                'formatter': 'basic',
+                'level': 'INFO',
+            },
+            'debug': {
+                'class': 'logging.FileHandler',
+                'filename': debug_log_path,
+                'mode': 'a',
+                'formatter': 'detailed',
+                'level': 'DEBUG',
+            },
+        },
+        'root': {
+            'level': 'DEBUG',
+            'handlers': ['console', 'info', 'debug']
+        },
+    }
+    log_queue = mp.Queue(maxsize=10_000)
+    logging.config.dictConfig(d)
 
-    log_path = os.path.join(store_dir, 'output.log')
-    logger = logging.Logger('train_status', level=logging.DEBUG)
+    logger_thread = threading.Thread(target=log_worker, args=(log_queue,), name="LogThread", daemon=True)
+    logger_thread.start()
 
-    stdout_handler = logging.StreamHandler()
-    stdout_handler.setLevel(logging.INFO)
-    stdout_handler.setFormatter(logging.Formatter('%(levelname)s | %(processName)s: %(process)d | %(threadName)s | %(message)s'))
-
-    file_handler = logging.FileHandler(log_path)
-    file_handler.setFormatter(logging.Formatter('%(asctime)s\t%(levelname)s\t%(message)s'))
-
-    qh = logging.handlers.QueueHandler(log_queue)
-
-    logger.addHandler(file_handler)
-    logger.addHandler(stdout_handler)
-    logger.addHandler(qh)
-
-    logger_thread = threading.Thread(target=log_worker, args=(log_queue,), name="LogThread")
-    return logger, logger_thread
+    root = logging.getLogger()
+    return root, log_queue
 
 
 def models_are_equal(model_1, model_2):

@@ -85,21 +85,21 @@ class TestEnv(unittest.TestCase):
 
     def test_lstm_env_is_not_stacked_after_reset(self):
         main.ARCHITECTURE = 'lstm'
-        env = main.dispatch_make_env()
+        env = main.dispatch_make_env(args)
         obs = env.reset()
         state = main.get_state(obs)
         self.assertEqual((1, 1, 84, 84), state.size())
 
     def test_default_env_has_4_frames_stacked_after_reset(self):
         main.ARCHITECTURE = None
-        env = main.dispatch_make_env()
+        env = main.dispatch_make_env(args)
         obs = env.reset()
         state = main.get_state(obs)
         self.assertEqual((1, 4, 84, 84), state.size())
 
     def test_lstm_env_is_not_stacked_after_step(self):
         main.ARCHITECTURE = 'lstm'
-        env = main.dispatch_make_env()
+        env = main.dispatch_make_env(args)
         _ = env.reset()
         obs, reward, done, info = env.step(0)
         state = main.get_state(obs)
@@ -107,7 +107,7 @@ class TestEnv(unittest.TestCase):
 
     def test_default_env_has_4_frames_stacked_after_step(self):
         main.ARCHITECTURE = None
-        env = main.dispatch_make_env()
+        env = main.dispatch_make_env(args)
         _ = env.reset()
         obs, reward, done, info = env.step(0)
         state = main.get_state(obs)
@@ -117,7 +117,7 @@ class TestEnv(unittest.TestCase):
 class TestMemoryEncoder(unittest.TestCase):
     def setUp(self) -> None:
         set_main_args()
-        main.create_storage_dir()
+        main.create_storage_dir(args.store_dir)
         main.logger = main.get_logger(main.args.store_dir)
 
         self.memory_queue, _, _, _, _, self.replay_out_queue, _ = main.get_communication_objects()
@@ -167,7 +167,7 @@ class TestModelInitialization(unittest.TestCase):
         importlib.reload(main)
 
     def assert_correct_initialization(self, model_class):
-        policy = main.initialize_model()
+        policy = main.initialize_model(args.architecture)
         self.assertEqual(type(policy), model_class)
 
     def test_dqn_initialized_correctly(self):
@@ -189,7 +189,7 @@ class TestActor(unittest.TestCase):
         set_main_constants()
         main.ARCHITECTURE = 'dqn'
 
-        model = main.initialize_model()
+        model = main.initialize_model(args.architecture)
         memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects()
         self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
                                 load_params_event=param_update_request, params_in=params_in)
@@ -253,7 +253,7 @@ class TestReplay(unittest.TestCase):
         set_main_constants()
 
         _, _, _, replay_in_queue, replay_out_queue, _ = main.get_communication_objects()
-        self.replay = main.Replay(replay_in_queue, replay_out_queue)
+        self.replay = main.Replay(replay_in_queue, replay_out_queue, log_queue, )
 
     # todo: mock some queues and test multiprocessing
 
@@ -271,10 +271,10 @@ class TestLearner(unittest.TestCase):
         main.args.store_dir = self.store_dir
         main.logger = main.get_logger(self.store_dir)
 
-        model = main.initialize_model()
+        model = main.initialize_model(args.architecture)
         _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects()
         self.learner = main.Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue,
-                                    event=param_update_request, params_out=params_out, batch_size=BATCH_SIZE)
+                                    event=param_update_request, params_out=params_out, learning_params=
 
     def tearDown(self) -> None:
         del self.learner
