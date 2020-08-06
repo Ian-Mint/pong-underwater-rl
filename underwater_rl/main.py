@@ -70,7 +70,7 @@ class Learner:
                  optimizer,
                  model,
                  sample_queue: torch.multiprocessing.Queue,
-                 event: mp.Event,
+                 event: torch.multiprocessing.Event,
                  params_out: mp.connection.Connection,
                  checkpoint_path: str,
                  log_queue: torch.multiprocessing.Queue,
@@ -279,7 +279,7 @@ class Actor:
                  n_episodes: int,
                  render_mode: Union[str, bool],
                  memory_queue: torch.multiprocessing.Queue,
-                 load_params_event: mp.Event,
+                 load_params_event: torch.multiprocessing.Event,
                  params_in: mp.connection.Connection,
                  global_args: argparse.Namespace,
                  log_queue: torch.multiprocessing.Queue,
@@ -999,8 +999,8 @@ def get_communication_objects():
     replay_out_queue = torch.multiprocessing.Queue(maxsize=100)
     sample_queue = torch.multiprocessing.Queue(maxsize=10)
 
-    param_update_request = mp.Event()
-    pipe_in, pipe_out = mp.Pipe()
+    param_update_request = torch.multiprocessing.Event()
+    pipe_in, pipe_out = torch.multiprocessing.Pipe()
     return memory_queue, pipe_in, pipe_out, param_update_request, replay_in_queue, replay_out_queue, sample_queue
 
 
