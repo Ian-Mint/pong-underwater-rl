@@ -827,8 +827,10 @@ def get_parser():
                          help='switch for rank-based prioritized replay (omit if proportional)')
     rl_args.add_argument('--batch-size', dest='batch_size', default=512, type=int,
                          help="network training batch size or sequence length for recurrent networks")
-    rl_args.add_argument('--compress-state', dest='compress_state', action='store_true', default=False,
-                         help="If set, store states compressed as png images")
+    rl_args.add_argument('--compress', dest='compress_state', action='store_true', default=False,
+                         help="If set, store states compressed as png images. Add one CPU if set")
+    rl_args.add_argument('--actors', dest='n_actors', type=int, default=1,
+                         help="Number of actors to use. 3 + n_actors CPUs required")
 
     '''resume args'''
     resume_args = parser.add_argument_group("Resume", "Store experiments / Resume training")
@@ -909,8 +911,9 @@ def main():
         get_communication_objects()
 
     # Create subprocesses
-    # todo: try multiple actors
-    actor = Actor(model=model,
+    actors = []
+    for _ in range(args.n_actors):
+        a = Actor(model=model,
                   n_episodes=args.episodes,
                   render_mode=args.render,
                   memory_queue=memory_queue,
@@ -919,6 +922,8 @@ def main():
                   global_args=args,
                   log_queue=log_queue,
                   actor_params=actor_params)
+        actors.append(a)
+
     learner = Learner(optimizer=optim.Adam,
                       model=model,
                       sample_queue=sample_queue,
@@ -936,7 +941,7 @@ def main():
                                   name='PNG Decoder')
 
     # Start subprocesses
-    actor.start()
+    run_all(actors, 'start')
     png_encoder_proc.start()
     replay.start()
     png_decoder_proc.start()
@@ -944,10 +949,10 @@ def main():
 
     try:
         # Join subprocess. actor is the only one that is not infinite.
-        actor.join()
+        run_all(actors, 'join')
         logger.info("All actors finished")
     except KeyboardInterrupt:
-        del actor
+        run_all(actors, '__del__')
     finally:
         logger.info("terminating PNG Encoder")
         png_encoder_proc.terminate()
@@ -957,6 +962,11 @@ def main():
         del learner
         png_encoder_proc.join()
         png_decoder_proc.join()
+
+
+def run_all(actors: List[Actor], method: str, *args, **kwargs):
+    for a in actors:
+        a.__getattribute__(method)(*args, **kwargs)
 
 
 def get_communication_objects():
