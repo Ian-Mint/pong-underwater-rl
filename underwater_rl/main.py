@@ -5,6 +5,7 @@ import math
 import logging
 from logging.handlers import QueueHandler
 # todo: use torch.multiprocessing: https://pytorch.org/docs/stable/multiprocessing.html#module-torch.multiprocessing
+import torch.multiprocessing
 import multiprocessing as mp
 import os
 import pickle
@@ -68,11 +69,11 @@ class Learner:
     def __init__(self,
                  optimizer,
                  model,
-                 sample_queue: mp.Queue,
+                 sample_queue: torch.multiprocessing.Queue,
                  event: mp.Event,
                  params_out: mp.connection.Connection,
                  checkpoint_path: str,
-                 log_queue: mp.Queue,
+                 log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]]):
         if not isinstance(model, DQN):
             # todo: allow other kinds of models
@@ -277,11 +278,11 @@ class Actor:
                  model: nn.Module,
                  n_episodes: int,
                  render_mode: Union[str, bool],
-                 memory_queue: mp.Queue,
+                 memory_queue: torch.multiprocessing.Queue,
                  load_params_event: mp.Event,
                  params_in: mp.connection.Connection,
                  global_args: argparse.Namespace,
-                 log_queue: mp.Queue,
+                 log_queue: torch.multiprocessing.Queue,
                  actor_params: Dict[str, Union[int, float]],
                  image_dir: str = None):
         """
@@ -468,7 +469,10 @@ def wait_event_not_set(event, timeout=None):
         raise TimeoutError
 
 
-def memory_encoder(memory_queue: mp.Queue, replay_in_queue: mp.Queue, log_queue: mp.Queue, compress=False):
+def memory_encoder(memory_queue: torch.multiprocessing.Queue,
+                   replay_in_queue: torch.multiprocessing.Queue,
+                   log_queue: torch.multiprocessing.Queue,
+                   compress=False):
     """
     Encoder worker to be run alongside Actors
     :param replay_in_queue:
@@ -563,6 +567,7 @@ def memory_decoder(sample_queue, replay_out_queue, log_queue, compress=False):
                                          non_final_mask, non_final_next_states,
                                          idxs=None, weights=None)
 
+        # todo: make sure all tensors are pushed to DEVICE
         sample_queue.put(processed_batch)
         logger.debug(f'sample_queue length: {sample_queue.qsize()} after put')
 
@@ -680,7 +685,7 @@ class Replay:
             if memory_length >= self.initial_memory:
                 with self.lock:
                     batch = random.sample(self.memory, self.batch_size)
-                self.replay_out_queue.put(batch)  # blocks if the queue is full
+                self.replay_out_queue.put(batch)
                 self.logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
             else:
                 time.sleep(1)
@@ -989,10 +994,10 @@ def run_all(actors: List[Actor], method: str, *args, **kwargs):
 
 
 def get_communication_objects():
-    memory_queue = mp.Queue(maxsize=1000)
-    replay_in_queue = mp.Queue(maxsize=1000)
-    replay_out_queue = mp.Queue(maxsize=100)
-    sample_queue = mp.Queue(maxsize=10)
+    memory_queue = torch.multiprocessing.Queue(maxsize=1000)
+    replay_in_queue = torch.multiprocessing.Queue(maxsize=1000)
+    replay_out_queue = torch.multiprocessing.Queue(maxsize=100)
+    sample_queue = torch.multiprocessing.Queue(maxsize=10)
 
     param_update_request = mp.Event()
     pipe_in, pipe_out = mp.Pipe()
