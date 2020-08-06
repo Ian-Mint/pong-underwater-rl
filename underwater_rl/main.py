@@ -96,6 +96,7 @@ class Learner:
         self.target = deepcopy(model)
         self.optimizer = optimizer(self.policy.parameters(), lr=self.learning_rate)
 
+        self.lock = None
         self.logger = None
         self.loss = None
         self.epoch = 0
@@ -115,6 +116,8 @@ class Learner:
 
     def main_worker(self):
         self.logger = get_logger_from_thread(self.log_queue)
+
+        self.lock = threading.Lock()
         param_update_thread = threading.Thread(target=self.update_actors, daemon=True)
         param_update_thread.start()
 
@@ -128,7 +131,9 @@ class Learner:
         while True:
             if self.event.is_set():
                 # todo: investigate whether this data could be corrupted if it is written at the same time it is read
+                self.lock.acquire()
                 self.params_out.send(deepcopy(self.policy.state_dict()))
+                self.lock.release()
                 self.event.clear()
             else:
                 time.sleep(0.01)
@@ -215,7 +220,10 @@ class Learner:
     def step_optimizer(self):
         self.optimizer.zero_grad()
         self.loss.backward()
+
+        self.lock.acquire()
         self.optimizer.step()
+        self.lock.release()
 
     def get_loss(self, state_action_values, expected_state_action_values, idxs, weights):
         if self.prioritized:  # TD error based priority
@@ -624,7 +632,7 @@ class Replay:
         self.memory = deque(maxlen=params['memory_size'])
 
         self.logger = None
-        self.push_thread = None  # can't pass Thread objects to a new process using spawn or forkserver
+        self.push_proc = None  # can't pass Thread objects to a new process using spawn or forkserver
         self.proc = mp.Process(target=self.main_worker, name="Replay")
 
     def __del__(self):
@@ -647,14 +655,14 @@ class Replay:
         """
         Launch push thread and run push worker in the main thread.
         """
-        self.logger = get_logger_from_thread(self.log_queue)
-        self.logger.debug("Replay process started")
+        # replay_in_queue was saturating with 10 actors when this was run as a thread
+        self.push_proc = mp.Process(target=self.push_worker, daemon=True, name="Push")
+        self.push_proc.start()
 
-        self.push_thread = threading.Thread(target=self.push_worker, daemon=True, name="Push")
-        self.push_thread.start()
-        self.sample_worker()  # run sample worker in the main thread
+        self.sample_worker()  # run sample worker in the main process
 
     def push_worker(self):
+        self.logger = get_logger_from_thread(self.log_queue)
         self.logger.debug("Replay memory push worker started")
         while True:
             sample = self.replay_in_queue.get()
@@ -662,12 +670,16 @@ class Replay:
             self.logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after get')
 
     def sample_worker(self):
+        self.logger = get_logger_from_thread(self.log_queue)
         self.logger.debug("Replay memory sample worker started")
         while True:
             if len(self.memory) >= self.initial_memory:
                 batch = random.sample(self.memory, self.batch_size)
                 self.replay_out_queue.put(batch)  # blocks if the queue is full
                 self.logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
+            else:
+                time.sleep(1)
+                self.logger.debug(f'memory length: {len(self.memory)}')
 
 
 def display_state(state: torch.Tensor):
@@ -933,6 +945,8 @@ def main():
                       log_queue=log_queue,
                       learning_params=learning_params)
     replay = Replay(replay_in_queue, replay_out_queue, log_queue, replay_params)
+
+    # todo: the more actors we have, the more encoders we need. 10 actors is easily saturating the queue
     png_encoder_proc = mp.Process(target=memory_encoder,
                                   args=(memory_queue, replay_in_queue, log_queue, args.compress_state),
                                   name='PNG Encoder')
