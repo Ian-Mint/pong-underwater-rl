@@ -1005,5 +1005,5 @@ def get_communication_objects():
 
 
 if __name__ == '__main__':
-    mp.set_start_method('spawn')
+    mp.set_start_method('forkserver')
     main()
