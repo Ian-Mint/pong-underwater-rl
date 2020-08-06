@@ -418,14 +418,14 @@ class Actor:
         return a.item()
 
     def log_checkpoint(self, interval):
-        # todo: if self.episode % interval:
+        # todo: restore average logging on an interval -  if self.episode % interval:
         avg_reward = sum([h.total_reward for h in self.history[-interval:]]) / interval
         avg_steps = int(sum([h.n_steps for h in self.history[-interval:]]) / interval)
         self.logger.info(f'Actor: {self.id:<3}\t'
                          f'Total steps: {self.total_steps:<9}\t'
                          f'Episode: {self.episode:<5}\t'
-                         f'Avg reward: {avg_reward:.2f}\t'
-                         f'Avg steps: {avg_steps}')
+                         f'Reward: {int(self.history[-1].total_reward)}\t'
+                         f'Steps: {self.history[-1].n_steps}')
 
     def dispatch_render(self):
         if self.render_mode:
@@ -462,7 +462,7 @@ def wait_event_not_set(event, timeout=None):
         raise TimeoutError
 
 
-def memory_encoder(memory_queue, replay_in_queue, log_queue):
+def memory_encoder(memory_queue, replay_in_queue, log_queue, compress=False):
     """
     Encoder worker to be run alongside Actors
     :param replay_in_queue:
@@ -483,20 +483,27 @@ def memory_encoder(memory_queue, replay_in_queue, log_queue):
         if next_state is not None:
             next_state = next_state.squeeze().numpy()
 
-        png_next_state = None
-        if state.ndim == 2:
-            png_state = io.BytesIO()
-            png_next_state = io.BytesIO()
-            Image.fromarray(state).save(png_state, format='png')
-            if next_state is not None:
-                Image.fromarray(next_state).save(png_next_state, format='png')
+        if compress:
+            png_next_state, png_state = compress_states(next_state, state)
+            replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
         else:
-            png_state = encode_stacked_frames(state)
-            if next_state is not None:
-                png_next_state = encode_stacked_frames(next_state)
-
-        replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
+            replay_in_queue.put(Transition(actor_id, step_number, state, action, next_state, reward))
         logger.debug(f'replay_in_queue length: {replay_in_queue.qsize()} after put')
+
+
+def compress_states(next_state, state):
+    png_next_state = None
+    if state.ndim == 2:
+        png_state = io.BytesIO()
+        png_next_state = io.BytesIO()
+        Image.fromarray(state).save(png_state, format='png')
+        if next_state is not None:
+            Image.fromarray(next_state).save(png_next_state, format='png')
+    else:
+        png_state = encode_stacked_frames(state)
+        if next_state is not None:
+            png_next_state = encode_stacked_frames(next_state)
+    return png_next_state, png_state
 
 
 def encode_stacked_frames(state) -> List[io.BytesIO]:
@@ -517,31 +524,31 @@ def decode_stacked_frames(png_state: List[io.BytesIO]) -> torch.Tensor:
     return torch.stack(result).unsqueeze(0).to(DEVICE)
 
 
-def memory_decoder(sample_queue, replay_out_queue, log_queue):
+def memory_decoder(sample_queue, replay_out_queue, log_queue, compress=False):
     """
     Decoder worker to be run alongside Learner
+    :param compress: If true, compress frames as PNG images. Saves ~50% memory, but will require multiple workers to 
+                     feed the learner quickly enough.
     """
     logger = get_logger_from_thread(log_queue)
     logger.debug("Memory decoder process started")
 
-    transform = transforms.ToTensor()
     while True:
         batch = replay_out_queue.get()
         logger.debug(f'replay_out_queue length: {replay_out_queue.qsize()} after get')
 
         next_state = None
         decoded_batch = []
-        for transition in batch:
-            actor_id, step_number, png_state, action, png_next_state, reward = transition
-            if isinstance(png_state, list):
-                state = decode_stacked_frames(png_state)
-                if png_next_state is not None:
-                    next_state = decode_stacked_frames(png_next_state)
-            else:
-                state = transform(Image.open(png_state)).to(DEVICE)
-                if png_next_state is not None:
-                    next_state = transform(Image.open(png_next_state)).to(DEVICE)
-            decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
+        if compress:
+            for transition in batch:
+                actor_id, step_number, png_state, action, png_next_state, reward = transition
+                next_state, state = decompress_states(png_next_state, png_state)
+                decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
+        else:
+            for transition in batch:
+                actor_id, step_number, state, action, next_state, reward = transition
+                next_state, state = states_to_tensor(next_state, state)
+                decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
 
         batch, actions, rewards = process_transitions(decoded_batch)
         non_final_mask, non_final_next_states = mask_non_final(batch)
@@ -552,6 +559,33 @@ def memory_decoder(sample_queue, replay_out_queue, log_queue):
 
         sample_queue.put(processed_batch)
         logger.debug(f'sample_queue length: {sample_queue.qsize()} after put')
+
+
+def states_to_tensor(next_state, state):
+    state = to_tensor(state)
+    next_state = to_tensor(next_state)
+    return next_state, state
+
+
+def decompress_states(png_next_state, png_state):
+    transform = transforms.ToTensor()
+    next_state = None
+    if isinstance(png_state, list):
+        state = decode_stacked_frames(png_state)
+        if png_next_state is not None:
+            next_state = decode_stacked_frames(png_next_state)
+    else:
+        state = transform(Image.open(png_state)).to(DEVICE)
+        if png_next_state is not None:
+            next_state = transform(Image.open(png_next_state)).to(DEVICE)
+    return next_state, state
+
+
+def to_tensor(state: np.ndarray) -> torch.Tensor:
+    if state is not None:
+        state = torch.from_numpy(state).to(DEVICE)
+        state = state.unsqueeze(0)
+    return state
 
 
 class Replay:
@@ -791,8 +825,10 @@ def get_parser():
                          help='switch for prioritized replay (default: False)')
     rl_args.add_argument('--rankbased', default=False, action='store_true',
                          help='switch for rank-based prioritized replay (omit if proportional)')
-    rl_args.add_argument('--batch-size', dest='batch_size', default=32, type=int,
+    rl_args.add_argument('--batch-size', dest='batch_size', default=512, type=int,
                          help="network training batch size or sequence length for recurrent networks")
+    rl_args.add_argument('--compress-state', dest='compress_state', action='store_true', default=False,
+                         help="If set, store states compressed as png images")
 
     '''resume args'''
     resume_args = parser.add_argument_group("Resume", "Store experiments / Resume training")
@@ -892,9 +928,11 @@ def main():
                       log_queue=log_queue,
                       learning_params=learning_params)
     replay = Replay(replay_in_queue, replay_out_queue, log_queue, replay_params)
-    png_encoder_proc = mp.Process(target=memory_encoder, args=(memory_queue, replay_in_queue, log_queue),
+    png_encoder_proc = mp.Process(target=memory_encoder,
+                                  args=(memory_queue, replay_in_queue, log_queue, args.compress_state),
                                   name='PNG Encoder')
-    png_decoder_proc = mp.Process(target=memory_decoder, args=(sample_queue, replay_out_queue, log_queue),
+    png_decoder_proc = mp.Process(target=memory_decoder,
+                                  args=(sample_queue, replay_out_queue, log_queue, args.compress_state),
                                   name='PNG Decoder')
 
     # Start subprocesses
