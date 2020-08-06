@@ -4,3 +4,4 @@ __temp__/
 dqn_pong_model
 cache/
 *.ipynb
+debug.log

@@ -79,7 +79,7 @@ if __name__ == '__main__':
                         help="Preview the main.py command(s)")
     args = parser.parse_args()
     if args.ephemeral:
-        if args.git_email:
+        if not args.git_email:
             parser.error("--ephemeral requires --git-email.")
 
     if not isinstance(args.file, list):
@@ -100,7 +100,6 @@ if __name__ == '__main__':
 
     # configure the first container
     cmd_template = job['spec']['template']['spec']['containers'][0]['args'][0]
-    cmd_template = cmd_template.replace('$', '')
     cmd = populate_cmd(cmd_template, experiments_options[0])
 
     if len(args.name) > 1:
