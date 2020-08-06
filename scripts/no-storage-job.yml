@@ -10,19 +10,19 @@ spec:
         image: gitlab-registry.nautilus.optiputer.net/jiacheng/docker-images:gym
         command: ["/bin/bash","-c"]
         args:
-        - "mkdir /ephemeral/${user};
-          cd /ephemeral/${user};
-          git clone https://github.com/Ian-Mint/pong-underwater-rl.git --branch ${branch};
+        - "mkdir /ephemeral/{user};
+          cd /ephemeral/{user};
+          git clone https://github.com/Ian-Mint/pong-underwater-rl.git --branch {branch};
           cd pong-underwater-rl;
-          git checkout -b ${job_name};
+          git checkout -b {job_name};
           pip install -e gym-dynamic-pong;
           cd underwater_rl;
-          python main.py ${options};
-          git config --global user.name ${user};
-          git config --global user.email ${git_email};
+          python main.py {options};
+          git config --global user.name {user};
+          git config --global user.email {git_email};
           git add --all;
-          git commit -m \"ex: ${job_name}\";
-          git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Ian-Mint/pong-underwater-rl.git"
+          git commit -m \"ex: {job_name}\";
+          git push https://${{GIT_USERNAME}}:${{GIT_PASSWORD}}@github.com/Ian-Mint/pong-underwater-rl.git"
         volumeMounts:
         - mountPath: /ephemeral
           name: ephemeral
@@ -39,17 +39,17 @@ spec:
             nvidia.com/gpu: "1"
             cpu: "1"
             ephemeral-storage: 20Gi
-      env:
-      - name: GIT_USERNAME
-        valueFrom:
-          secretKeyRef:
-            name: github
-            key: gituser
-      - name: GIT_PASSWORD
-        valueFrom:
-          secretKeyRef:
-            name: github
-            key: gitpassword
+        env:
+        - name: GIT_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: github
+              key: gituser
+        - name: GIT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: github
+              key: gitpassword
       restartPolicy: Never
       volumes:
         - name: ephemeral

@@ -1,0 +1,34 @@
+# Environment options
+width: 160
+height: 160
+ball: 1.0
+ball_size: 2.0
+#ball_volume:  # comment out to turn off
+snell: 1.0
+snell_width: 80.0
+snell_change: 0
+snell_visible: "none"
+#no_refraction:  # comment out to turn off
+#uniform_speed:  # comment out to turn off
+paddle_speed: 1.0
+paddle_length: 20
+paddle_angle: 70
+state: "binary"
+update_prob: 0.4
+
+# Model and training options
+episodes: 4000
+learning_rate: 1e-4
+network: dqn
+replay: 100000
+#rankbased: # comment out to turn off
+#priority: # comment out to turn off
+#pretrain:  # comment out to turn off
+batch_size: 32
+#compress:  # comment out to turn off
+actors: 10
+
+# File control options
+#resume:  # comment out to turn off
+#checkpoint: dqn_pong_model
+#history: history.p
