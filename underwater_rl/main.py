@@ -130,10 +130,9 @@ class Learner:
     def update_actors(self):
         while True:
             if self.event.is_set():
-                # todo: investigate whether this data could be corrupted if it is written at the same time it is read
-                self.lock.acquire()
-                self.params_out.send(deepcopy(self.policy.state_dict()))
-                self.lock.release()
+                with self.lock:
+                    params = deepcopy(self.policy.state_dict())
+                self.params_out.send(params)
                 self.event.clear()
             else:
                 time.sleep(0.01)
@@ -221,9 +220,8 @@ class Learner:
         self.optimizer.zero_grad()
         self.loss.backward()
 
-        self.lock.acquire()
-        self.optimizer.step()
-        self.lock.release()
+        with self.lock:
+            self.optimizer.step()
 
     def get_loss(self, state_action_values, expected_state_action_values, idxs, weights):
         if self.prioritized:  # TD error based priority
@@ -632,7 +630,8 @@ class Replay:
         self.memory = deque(maxlen=params['memory_size'])
 
         self.logger = None
-        self.push_proc = None  # can't pass Thread objects to a new process using spawn or forkserver
+        self.push_thread = None  # can't pass Thread objects to a new process using spawn or forkserver
+        self.lock = None
         self.proc = mp.Process(target=self.main_worker, name="Replay")
 
     def __del__(self):
@@ -655,31 +654,36 @@ class Replay:
         """
         Launch push thread and run push worker in the main thread.
         """
-        # replay_in_queue was saturating with 10 actors when this was run as a thread
-        self.push_proc = mp.Process(target=self.push_worker, daemon=True, name="Push")
-        self.push_proc.start()
+        self.logger = get_logger_from_thread(self.log_queue)
+        self.logger.debug("Replay process started")
 
-        self.sample_worker()  # run sample worker in the main process
+        self.lock = threading.Lock()
+
+        self.push_thread = threading.Thread(target=self.push_worker, daemon=True, name="Push")
+        self.push_thread.start()
+        self.sample_worker()  # run sample worker in the main thread
 
     def push_worker(self):
-        self.logger = get_logger_from_thread(self.log_queue)
         self.logger.debug("Replay memory push worker started")
         while True:
+            # todo: consider batching samples
             sample = self.replay_in_queue.get()
-            self.memory.append(sample)
+            with self.lock:
+                self.memory.append(sample)
             self.logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after get')
 
     def sample_worker(self):
-        self.logger = get_logger_from_thread(self.log_queue)
         self.logger.debug("Replay memory sample worker started")
         while True:
             if len(self.memory) >= self.initial_memory:
-                batch = random.sample(self.memory, self.batch_size)
+                with self.lock:
+                    batch = random.sample(self.memory, self.batch_size)
                 self.replay_out_queue.put(batch)  # blocks if the queue is full
                 self.logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
             else:
                 time.sleep(1)
-                self.logger.debug(f'memory length: {len(self.memory)}')
+                with self.lock:
+                    self.logger.debug(f'memory length: {len(self.memory)}')
 
 
 def display_state(state: torch.Tensor):
