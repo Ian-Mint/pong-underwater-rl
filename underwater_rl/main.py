@@ -396,9 +396,9 @@ class Actor:
         if random.random() > self.epsilon:
             with torch.no_grad():
                 if self.architecture == 'distribution_dqn':
-                    return (self.policy.qvals(state.to(DEVICE))).argmax().item()
+                    return (self.policy.qvals(state)).argmax().item()
                 else:
-                    return self.policy(state.to(DEVICE)).max(1)[1].item()
+                    return self.policy(state).max(1)[1].item()
         else:
             return random.randrange(N_ACTIONS)
 
@@ -742,7 +742,7 @@ def initialize_model(architecture) -> nn.Module:
                     'dueling_dqn': DuelingDQN,
                     'lstm': DRQN,
                     'distributional_dqn': DistributionalDQN}
-    return model_lookup[architecture](n_actions=N_ACTIONS).to(DEVICE)
+    return model_lookup[architecture](n_actions=N_ACTIONS)  # Allow users of the model to put it on the desired device
 
 
 def load_checkpoint():
