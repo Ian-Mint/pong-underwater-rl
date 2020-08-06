@@ -141,7 +141,11 @@ Other options:
 `--ephemeral`
 - Uses ephemeral storage rather than Ceph
 - based on the template `no-storage-job.yml`
-- because storage is ephemeral, requires git credentials to push results
+- because storage is ephemeral, requires git credentials to be stored as Kubernetes secret.
+- store secret git credentials with the command:
+```shell script
+kubectl create secret generic github --from-literal=gituser=<username> --from-literal=gitpassword=<password>
+```
 
 ## grid-search.py
 
