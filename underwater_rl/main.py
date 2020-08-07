@@ -92,8 +92,8 @@ class Learner:
         self.double = learning_params['double']
         self.architecture = learning_params['architecture']
 
-        self.policy = deepcopy(model)
-        self.target = deepcopy(model)
+        self.policy = deepcopy(model).to(DEVICE)
+        self.target = deepcopy(model).to(DEVICE)
         self.optimizer = optimizer(self.policy.parameters(), lr=self.learning_rate)
 
         self.params = None
@@ -272,8 +272,8 @@ class Learner:
 
 def separate_batches(actions, batch, rewards):
     state_batch = torch.cat(batch.state).to(DEVICE)
-    action_batch = torch.cat(actions)
-    reward_batch = torch.cat(rewards)
+    action_batch = torch.cat(actions).to(DEVICE)
+    reward_batch = torch.cat(rewards).to(DEVICE)
     return action_batch, reward_batch, state_batch
 
 
