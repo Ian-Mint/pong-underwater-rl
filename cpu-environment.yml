@@ -1,4 +1,4 @@
-name: pong-underwater-rl
+name: torch
 channels:
   - powerai
   - conda-forge
@@ -11,6 +11,7 @@ dependencies:
   - cpuonly
   - scipy
   - numpy
+  - opencv
   - pandas
   - matplotlib
   - dash

@@ -7,7 +7,7 @@ spec:
     spec:
       containers:
       - name: gpu-container
-        image: gitlab-registry.nautilus.optiputer.net/jiacheng/docker-images:gym
+        image: gitlab-registry.nautilus.optiputer.net/ian/torch:latest
         command: ["/bin/bash","-c"]
         args:
         - "mkdir /ephemeral/{user};
