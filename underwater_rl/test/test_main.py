@@ -191,8 +191,8 @@ class TestActor(unittest.TestCase):
 
         model = main.initialize_model(args.architecture)
         memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects(args.actors)
-        self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue, pipe=None,
-                                global_args=, log_queue=, actor_params=)
+        self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
+                                replay_in_queue=replay_out_queue, pipe=None, global_args=, log_queue=, actor_params=)
 
         obs = self.actor.env.reset()
         self.state = main.get_state(obs)
@@ -273,8 +273,9 @@ class TestLearner(unittest.TestCase):
 
         model = main.initialize_model(args.architecture)
         _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects(args.actors)
-        self.learner = main.Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, pipes=params_out,
-                                    checkpoint_path=, log_queue=, learning_params=)
+        self.learner = main.Learner(optimizer=optim.Adam, model=model, replay_out_queue=replay_out_queue,
+                                    sample_queue=sample_queue, pipes=params_out, checkpoint_path=, log_queue=,
+                                    learning_params=)
 
     def tearDown(self) -> None:
         del self.learner
@@ -285,7 +286,7 @@ class TestLearner(unittest.TestCase):
     def test_learner_process_starts_and_blocks_with_empty_sample_queue(self):
         self.learner.start()
         time.sleep(1)
-        if not self.learner.proc.is_alive():
+        if not self.learner.main_proc.is_alive():
             self.fail("Learner terminated unexpectedly")
 
 
