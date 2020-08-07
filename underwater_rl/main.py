@@ -172,9 +172,9 @@ class Learner:
         next_state_values = self.forward_target(non_final_mask, non_final_next_states)
         expected_state_action_values = (next_state_values * self.gamma) + reward_batch.float()
 
-        self.loss = self.get_loss(state_action_values, expected_state_action_values, idxs, weights)
-        self.logger.debug(f"loss norm: {self.loss.norm()}")
-        self.step_optimizer()
+        loss = self.get_loss(state_action_values, expected_state_action_values, idxs, weights)
+        self.logger.debug(f"loss norm: {loss.norm()}")
+        self.step_optimizer(loss)
 
     def optimize_lstm(self):
         action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
@@ -186,8 +186,8 @@ class Learner:
         next_state_values = self.forward_target(non_final_mask, non_final_next_states)
         expected_state_action_values = (next_state_values * self.gamma) + reward_batch.float()
 
-        self.loss = self.get_loss(state_action_values, expected_state_action_values, idxs, weights)
-        self.step_optimizer()
+        loss = self.get_loss(state_action_values, expected_state_action_values, idxs, weights)
+        self.step_optimizer(loss)
 
     def optimize_distributional(self):
         action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
@@ -214,9 +214,9 @@ class Learner:
         if self.prioritized:  # KL divergence based priority
             raise NotImplementedError("Prioritized replay not implemented")
         else:
-            self.loss = entropy.mean()
+            loss = entropy.mean()
 
-        self.step_optimizer()
+        self.step_optimizer(loss)
 
     def sample(self) -> ProcessedBatch:
         if self.prioritized:
@@ -244,9 +244,9 @@ class Learner:
             next_state_values[non_final_mask] = self.target(non_final_next_states).max(1)[0].detach()
         return next_state_values
 
-    def step_optimizer(self):
+    def step_optimizer(self, loss):
         self.optimizer.zero_grad()
-        self.loss.backward()
+        loss.backward()
 
         with self.policy_lock:
             self.optimizer.step()
@@ -1002,7 +1002,7 @@ def get_communication_objects(n_pipes) -> Tuple[mp.Queue, mp.Queue, mp.Queue, mp
     memory_queue = torch.multiprocessing.Queue(maxsize=1000)
     replay_in_queue = torch.multiprocessing.Queue(maxsize=1000)
     replay_out_queue = torch.multiprocessing.Queue(maxsize=100)
-    sample_queue = torch.multiprocessing.Queue(maxsize=10)
+    sample_queue = torch.multiprocessing.Queue(maxsize=1)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
     return memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes
