@@ -17,7 +17,7 @@ import time
 from collections import namedtuple, deque
 from copy import deepcopy
 from itertools import count
-from typing import Union, List, Dict
+from typing import Union, List, Dict, Tuple
 
 import gym
 import numpy as np
@@ -58,6 +58,12 @@ ProcessedBatch = namedtuple(
 HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
 
 
+class ParamPipe:
+    def __init__(self):
+        self.event = torch.multiprocessing.Event()
+        self.conn_in, self.conn_out = torch.multiprocessing.Pipe(duplex=False)
+
+
 def get_logger_from_thread(log_queue):
     logger = logging.getLogger()
     logger.addHandler(QueueHandler(log_queue))
@@ -66,14 +72,8 @@ def get_logger_from_thread(log_queue):
 
 
 class Learner:
-    def __init__(self,
-                 optimizer,
-                 model,
-                 sample_queue: torch.multiprocessing.Queue,
-                 event: torch.multiprocessing.Event,
-                 params_out: mp.connection.Connection,
-                 checkpoint_path: str,
-                 log_queue: torch.multiprocessing.Queue,
+    def __init__(self, optimizer, model, sample_queue: torch.multiprocessing.Queue, pipes: List[ParamPipe],
+                 checkpoint_path: str, log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]]):
         if not isinstance(model, DQN):
             # todo: allow other kinds of models
@@ -81,8 +81,7 @@ class Learner:
 
         # todo: currently, batch_size does not control the batch size. It is only used for calculating total samples
         self.sample_queue = sample_queue
-        self.event = event
-        self.params_out = params_out
+        self.pipes = pipes
         self.log_queue = log_queue
 
         self.checkpoint_path = checkpoint_path
@@ -97,7 +96,9 @@ class Learner:
         self.target = deepcopy(model)
         self.optimizer = optimizer(self.policy.parameters(), lr=self.learning_rate)
 
-        self.lock = None
+        self.params = None
+        self.params_lock = None
+        self.policy_lock = None
         self.logger = None
         self.loss = None
         self.epoch = 0
@@ -118,23 +119,49 @@ class Learner:
     def main_worker(self):
         self.logger = get_logger_from_thread(self.log_queue)
 
-        self.lock = threading.Lock()
-        param_update_thread = threading.Thread(target=self.update_actors, daemon=True)
-        param_update_thread.start()
+        self.policy_lock = threading.Lock()
+        self.params_lock = threading.Lock()
 
+        param_update_thread = threading.Thread(target=self.copy_params, name='UpdateParams', daemon=True)
+        param_update_thread.start()
+        for n, p in enumerate(self.pipes):
+            t = threading.Thread(target=self.send_params, args=(p, ), name=f'SendParams-{n}', daemon=True)
+            t.start()
+
+        self.optimizer_loop()
+
+    def optimizer_loop(self):
         for self.epoch in count(1):
             self.optimize_model()
             self.update_target_net()
             if self.epoch % CHECKPOINT_INTERVAL:
                 self.save_checkpoint()
 
-    def update_actors(self):
+    def copy_params(self):
+        """
+        Update the pipe every second. Keep a lock to the pipe while it is being updated.
+        :return:
+        """
         while True:
-            if self.event.is_set():
-                with self.lock:
-                    params = deepcopy(self.policy.state_dict())
-                self.params_out.send(params)
-                self.event.clear()
+            with self.params_lock:
+                with self.policy_lock:
+                    self.params = deepcopy(self.policy.state_dict())
+            time.sleep(1)
+
+    def send_params(self, pipe: ParamPipe):
+        """
+        Thread to send params through `pipe`
+        :param pipe:
+        :return:
+        """
+        while self.params is None:
+            time.sleep(1)
+
+        while True:
+            if pipe.event.is_set():
+                with self.params_lock:
+                    pipe.conn_out.send(self.params)
+                pipe.event.clear()
             else:
                 time.sleep(0.01)
 
@@ -221,7 +248,7 @@ class Learner:
         self.optimizer.zero_grad()
         self.loss.backward()
 
-        with self.lock:
+        with self.policy_lock:
             self.optimizer.step()
 
     def get_loss(self, state_action_values, expected_state_action_values, idxs, weights):
@@ -274,22 +301,14 @@ def get_state(obs):
 class Actor:
     counter = 0
 
-    def __init__(self,
-                 model: nn.Module,
-                 n_episodes: int,
-                 render_mode: Union[str, bool],
-                 memory_queue: torch.multiprocessing.Queue,
-                 load_params_event: torch.multiprocessing.Event,
-                 params_in: mp.connection.Connection,
-                 global_args: argparse.Namespace,
-                 log_queue: torch.multiprocessing.Queue,
-                 actor_params: Dict[str, Union[int, float]],
+    def __init__(self, model: nn.Module, n_episodes: int, render_mode: Union[str, bool],
+                 memory_queue: torch.multiprocessing.Queue, pipe: ParamPipe, global_args: argparse.Namespace,
+                 log_queue: torch.multiprocessing.Queue, actor_params: Dict[str, Union[int, float]],
                  image_dir: str = None):
         """
         Main training loop
 
-        :param load_params_event:
-        :param params_in:
+        :param pipe:
         :param n_episodes: Number of episodes over which to train or test
         :param render_mode: How and whether to visibly render states
         :param memory_queue: The queue that experiences are put in for storage
@@ -300,8 +319,7 @@ class Actor:
         :param actor_params: dictionary of parameters used to determine actor behavior
         :param image_dir: required if render_mode is not False
         """
-        self.params_in = params_in
-        self.load_params_event = load_params_event
+        self.pipe = pipe
         self.memory_queue = memory_queue
         self.log_queue = log_queue
         self.env = dispatch_make_env(global_args)
@@ -351,9 +369,9 @@ class Actor:
 
     def update_params(self):
         self.logger.debug(f"Actor-{self.id} updating params")
-        self.load_params_event.set()
-        wait_event_not_set(self.load_params_event, timeout=None)
-        params = self.params_in.recv()
+        self.pipe.event.set()
+        wait_event_not_set(self.pipe.event, timeout=None)
+        params = self.pipe.conn_in.recv()
         self.policy.load_state_dict(params)
         self.logger.debug(f"Actor-{self.id} params updated")
 
@@ -929,30 +947,17 @@ def main():
                                                                                      |
     Learner                                                                          +-> sample
     """
-    memory_queue, pipe_in, pipe_out, param_update_request, replay_in_queue, replay_out_queue, sample_queue = \
-        get_communication_objects()
+    memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes = get_communication_objects(args.n_actors)
 
     # Create subprocesses
     actors = []
-    for _ in range(args.n_actors):
-        a = Actor(model=model,
-                  n_episodes=args.episodes,
-                  render_mode=args.render,
-                  memory_queue=memory_queue,
-                  load_params_event=param_update_request,
-                  params_in=pipe_in,
-                  global_args=args,
-                  log_queue=log_queue,
-                  actor_params=actor_params)
+    for p in pipes:
+        a = Actor(model=model, n_episodes=args.episodes, render_mode=args.render, memory_queue=memory_queue, pipe=p,
+                  global_args=args, log_queue=log_queue, actor_params=actor_params)
         actors.append(a)
 
-    learner = Learner(optimizer=optim.Adam,
-                      model=model,
-                      sample_queue=sample_queue,
-                      event=param_update_request,
-                      params_out=pipe_out,
-                      checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
-                      log_queue=log_queue,
+    learner = Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, pipes=pipes,
+                      checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'), log_queue=log_queue,
                       learning_params=learning_params)
     replay = Replay(replay_in_queue, replay_out_queue, log_queue, replay_params)
 
@@ -993,15 +998,14 @@ def run_all(actors: List[Actor], method: str, *args, **kwargs):
         a.__getattribute__(method)(*args, **kwargs)
 
 
-def get_communication_objects():
+def get_communication_objects(n_pipes) -> Tuple[mp.Queue, mp.Queue, mp.Queue, mp.Queue, List[ParamPipe]]:
     memory_queue = torch.multiprocessing.Queue(maxsize=1000)
     replay_in_queue = torch.multiprocessing.Queue(maxsize=1000)
     replay_out_queue = torch.multiprocessing.Queue(maxsize=100)
     sample_queue = torch.multiprocessing.Queue(maxsize=10)
 
-    param_update_request = torch.multiprocessing.Event()
-    pipe_in, pipe_out = torch.multiprocessing.Pipe()
-    return memory_queue, pipe_in, pipe_out, param_update_request, replay_in_queue, replay_out_queue, sample_queue
+    pipes = [ParamPipe() for _ in range(n_pipes)]
+    return memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes
 
 
 if __name__ == '__main__':

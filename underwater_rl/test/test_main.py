@@ -120,7 +120,7 @@ class TestMemoryEncoder(unittest.TestCase):
         main.create_storage_dir(args.store_dir)
         main.logger = main.get_logger(main.args.store_dir)
 
-        self.memory_queue, _, _, _, _, self.replay_out_queue, _ = main.get_communication_objects()
+        self.memory_queue, _, _, _, _, self.replay_out_queue, _ = main.get_communication_objects(args.actors)
 
         self.proc = mp.Process(target=main.memory_encoder, args=(self.memory_queue, self.replay_out_queue))
 
@@ -190,9 +190,9 @@ class TestActor(unittest.TestCase):
         main.ARCHITECTURE = 'dqn'
 
         model = main.initialize_model(args.architecture)
-        memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects()
-        self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
-                                load_params_event=param_update_request, params_in=params_in)
+        memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects(args.actors)
+        self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue, pipe=None,
+                                global_args=, log_queue=, actor_params=)
 
         obs = self.actor.env.reset()
         self.state = main.get_state(obs)
@@ -252,7 +252,7 @@ class TestReplay(unittest.TestCase):
         set_main_args()
         set_main_constants()
 
-        _, _, _, replay_in_queue, replay_out_queue, _ = main.get_communication_objects()
+        _, _, _, replay_in_queue, replay_out_queue, _ = main.get_communication_objects(args.actors)
         self.replay = main.Replay(replay_in_queue, replay_out_queue, log_queue, )
 
     # todo: mock some queues and test multiprocessing
@@ -272,9 +272,9 @@ class TestLearner(unittest.TestCase):
         main.logger = main.get_logger(self.store_dir)
 
         model = main.initialize_model(args.architecture)
-        _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects()
-        self.learner = main.Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue,
-                                    event=param_update_request, params_out=params_out, learning_params=
+        _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects(args.actors)
+        self.learner = main.Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, pipes=params_out,
+                                    checkpoint_path=, log_queue=, learning_params=)
 
     def tearDown(self) -> None:
         del self.learner
