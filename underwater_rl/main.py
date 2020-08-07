@@ -194,7 +194,7 @@ def get_state(obs):
     if state.ndim == 3:
         state = state.transpose((2, 0, 1))
     state = torch.from_numpy(state)
-    return state.unsqueeze(0)
+    return state.unsqueeze(0).unsqueeze(0)
 
 
 def get_loss(state_action_values, expected_state_action_values, idxs, weights):
@@ -451,8 +451,8 @@ def dispatch_make_env():
 
 def get_models(architecture, n_actions):
     if 'basic' in args.state:
-        policy_net = BasicNet(in_channels=24, n_actions=n_actions).to(device)
-        target_net = BasicNet(in_channels=24, n_actions=n_actions).to(device)
+        policy_net = BasicNet(in_channels=1, n_actions=n_actions).to(device)
+        target_net = BasicNet(in_channels=1, n_actions=n_actions).to(device)
         target_net.load_state_dict(policy_net.state_dict())
     elif architecture == 'dqn_pong_model':
         policy_net = DQN(n_actions=n_actions).to(device)
