@@ -1,8 +1,13 @@
 FROM pytorch/pytorch:1.6.0-cuda10.1-cudnn7-runtime
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=America/Los_Angeles
 RUN apt-get update
-RUN apt-get install -y libsm6 libxext6 libxrender-dev vim git wget sudo psmisc locales cmake htop
+RUN apt-get upgrade -y
+RUN apt-get install -y libsm6 libxext6 libxrender-dev vim git wget sudo psmisc locales cmake htop pylint
 RUN locale-gen en_US.UTF-8
-ADD https://raw.githubusercontent.com/Ian-Mint/pong-underwater-rl/distributed/gpu-environment.yml /tmp/environment.yml
+ADD environment.yml /tmp/environment.yml
 RUN conda env create --file /tmp/environment.yml
 RUN conda init bash && echo "source activate torch" >> ~/.bashrc
 ENV PATH /opt/conda/envs/torch/bin:$PATH
+ADD https://gitlab.nautilus.optiputer.net/ian/torch/-/raw/master/.vimrc /root/.vimrc
+RUN git clone https://github.com/VundleVim/Vundle.vim.git /root/.vim/bundle/Vundle.vim
