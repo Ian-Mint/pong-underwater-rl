@@ -119,8 +119,6 @@ class Learner:
         self.epoch = 0
 
         self.main_proc = mp.Process(target=self.main_worker, name="Learner")
-        self.decoder_proc = mp.Process(target=self.memory_decoder, name="MemoryDecoder",
-                                       kwargs=dict(compress=False), daemon=True)
 
     def __del__(self):
         self.save_checkpoint()
@@ -131,8 +129,13 @@ class Learner:
         self.main_proc.join()
 
     def start(self):
+        # A started process has a `__weakref__` attribute that is not picklable. So, a started process cannot be passed
+        # by context to another process. In this case, only one of the processes can be stored in `self`, and the other
+        # process must be started before the `self` process.
+        decoder_proc = mp.Process(target=self.memory_decoder, name="MemoryDecoder",
+                                  kwargs=dict(compress=False), daemon=True)
+        decoder_proc.start()
         self.main_proc.start()
-        self.decoder_proc.start()
 
     def main_worker(self):
         self.logger = get_logger_from_thread(self.log_queue)
@@ -432,8 +435,6 @@ class Actor:
         self.history = []
 
         self.main_proc = mp.Process(target=self.main_worker, name=f"Actor-{self.id}")
-        self.encoder_proc = mp.Process(target=self.memory_encoder, name=f"Encoder-{self.id}",
-                                       kwargs=dict(compress=False), daemon=True)
 
     def __del__(self):
         if self.main_proc.pid is not None:
@@ -444,6 +445,10 @@ class Actor:
         self.main_proc.join()
 
     def start(self):
+        # See `Learner.start` for explanation about why `encoder_proc` is not made an attribute.
+        encoder_proc = mp.Process(target=self.memory_encoder, name=f"Encoder-{self.id}",
+                                  kwargs=dict(compress=False), daemon=True)
+        encoder_proc.start()
         self.main_proc.start()
 
     def main_worker(self):
