@@ -120,6 +120,7 @@ class Learner:
         self.double = learning_params['double']
         self.architecture = learning_params['architecture']
 
+        self.n_decoder_processes = 2
         if torch.cuda.device_count() != 0:
             self.device = 'cuda:0'
         else:
@@ -150,9 +151,12 @@ class Learner:
         # A started process has a `__weakref__` attribute that is not picklable. So, a started process cannot be passed
         # by context to another process. In this case, only one of the processes can be stored in `self`, and the other
         # process must be started before the `self` process.
-        decoder_proc = mp.Process(target=self.memory_decoder, name="MemoryDecoder",
-                                  kwargs=dict(compress=False), daemon=True)
-        decoder_proc.start()
+        for i in range(self.n_decoder_processes):
+            decoder_proc = mp.Process(target=self.memory_decoder,
+                                      name=f"MemoryDecoder-{i}",
+                                      kwargs=dict(compress=False),
+                                      daemon=True)
+            decoder_proc.start()
         self.main_proc.start()
 
     def main_worker(self):
@@ -1023,7 +1027,7 @@ def run_all(actors: List[Actor], method: str, *args, **kwargs):
 def get_communication_objects(n_pipes) -> Tuple[mp.Queue, mp.Queue, mp.Queue, mp.Queue, List[ParamPipe]]:
     memory_queue = torch.multiprocessing.Queue(maxsize=1000)
     replay_in_queue = torch.multiprocessing.Queue(maxsize=1000)
-    replay_out_queue = torch.multiprocessing.Queue(maxsize=100)
+    replay_out_queue = torch.multiprocessing.Queue(maxsize=10)
     sample_queue = torch.multiprocessing.Queue(maxsize=10)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
