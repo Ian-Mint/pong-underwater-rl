@@ -211,7 +211,7 @@ class Learner:
         while True:
             with self.params_lock:
                 with self.policy_lock:
-                    self.params = deepcopy(self.policy.state_dict())
+                    self.params = deepcopy(self.policy).to('cpu').state_dict()
             time.sleep(1)
 
     def send_params(self, pipe: ParamPipe):
@@ -232,13 +232,13 @@ class Learner:
                 time.sleep(0.01)
 
     def optimize_model(self):
-        action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
+        batch = self.sample()
 
-        state_action_values = self.forward_policy(action_batch, state_batch)
-        next_state_values = self.forward_target(non_final_mask, non_final_next_states)
-        expected_state_action_values = (next_state_values * self.gamma) + reward_batch.float()
+        state_action_values = self.forward_policy(batch.actions, batch.states)
+        next_state_values = self.forward_target(batch.non_final_mask, batch.non_final_next_states)
+        expected_state_action_values = (next_state_values * self.gamma) + batch.rewards.float()
 
-        self.loss = self.get_loss(state_action_values, expected_state_action_values, idxs, weights)
+        self.loss = self.get_loss(state_action_values, expected_state_action_values, batch.idxs, batch.weights)
         self.logger.debug(f"loss norm: {self.loss.norm()}")
         self.step_optimizer()
 
@@ -526,7 +526,6 @@ class Actor:
             torch.set_num_threads(n_threads)
 
     def update_params(self):
-        self.logger.debug(f"Actor-{self.id} updating params")
         self.pipe.event.set()
         wait_event_not_set(self.pipe.event, timeout=None)
         params = self.pipe.conn_in.recv()
