@@ -112,8 +112,13 @@ class Learner:
         self.double = learning_params['double']
         self.architecture = learning_params['architecture']
 
-        self.policy = deepcopy(model).to(DEVICE)
-        self.target = deepcopy(model).to(DEVICE)
+        if torch.cuda.device_count() != 0:
+            self.device = 'cuda:0'
+        else:
+            self.device = 'cpu'
+
+        self.policy = deepcopy(model).to(self.device)
+        self.target = deepcopy(model).to(self.device)
         self.optimizer = optimizer(self.policy.parameters(), lr=self.learning_rate)
 
         self.params = None
@@ -144,6 +149,7 @@ class Learner:
 
     def main_worker(self):
         self.logger = get_logger_from_thread(self.log_queue)
+        self.logger.info(f"Learner started on device {self.device}")
 
         self.policy_lock = threading.Lock()
         self.params_lock = threading.Lock()
@@ -218,7 +224,7 @@ class Learner:
         action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
 
         next_states_v = torch.cat(
-            [s if s is not None else state_batch[i] for i, s in enumerate(state_batch)]).to(DEVICE)
+            [s if s is not None else state_batch[i] for i, s in enumerate(state_batch)]).to(self.device)
         dones = np.stack(tuple(map(lambda s: s is None, state_batch)))
         # next state distribution
         next_distr_v, next_qvals_v = self.target.both(next_states_v)
@@ -233,7 +239,7 @@ class Learner:
         distr_v = self.policy(state_batch)
         state_action_values = distr_v[range(self.batch_size), action_batch.view(-1)]
         state_log_sm_v = F.log_softmax(state_action_values, dim=1)
-        proj_distr_v = torch.tensor(proj_distr).to(DEVICE)
+        proj_distr_v = torch.tensor(proj_distr).to(self.device)
         entropy = (-state_log_sm_v * proj_distr_v).sum(dim=1)
 
         if self.prioritized:  # KL divergence based priority
@@ -256,13 +262,13 @@ class Learner:
         return self.policy(state_batch).gather(1, action_batch)
 
     def forward_target(self, non_final_mask, non_final_next_states):
-        next_state_values = torch.zeros(self.batch_size, device=DEVICE)
+        next_state_values = torch.zeros(self.batch_size, device=self.device)
         if self.double:
             argmax_a_q_sp = self.policy(non_final_next_states).max(1)[1]
             q_sp = self.target(non_final_next_states).detach()
             # noinspection PyTypeChecker
             next_state_values[non_final_mask] = q_sp[
-                torch.arange(torch.sum(non_final_mask), device=DEVICE), argmax_a_q_sp]
+                torch.arange(torch.sum(non_final_mask), device=self.device), argmax_a_q_sp]
         elif self.architecture == 'soft_dqn':
             raise NotImplementedError("soft DQN is not yet implemented")
         else:
@@ -320,14 +326,14 @@ class Learner:
                     next_state, state = self.states_to_tensor(next_state, state)
                     decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
 
-            batch, actions, rewards = process_transitions(decoded_batch)
-            non_final_mask, non_final_next_states = mask_non_final(batch)
-            action_batch, reward_batch, state_batch = separate_batches(actions, batch, rewards)
+            batch, actions, rewards = self.process_transitions(decoded_batch)
+            non_final_mask, non_final_next_states = self.mask_non_final(batch)
+            action_batch, reward_batch, state_batch = self.separate_batches(actions, batch, rewards)
             processed_batch = ProcessedBatch(action_batch, reward_batch, state_batch,
                                              non_final_mask, non_final_next_states,
                                              idxs=None, weights=None)
 
-            # todo: make sure all tensors are pushed to DEVICE
+            # todo: make sure all tensors are pushed to self.device
             self.sample_queue.put(processed_batch)
             self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after put')
 
@@ -335,13 +341,13 @@ class Learner:
         transform = transforms.ToTensor()
         next_state = None
         if isinstance(png_state, list):
-            state = decode_stacked_frames(png_state)
+            state = self.decode_stacked_frames(png_state)
             if png_next_state is not None:
-                next_state = decode_stacked_frames(png_next_state)
+                next_state = self.decode_stacked_frames(png_next_state)
         else:
-            state = transform(Image.open(png_state)).to(DEVICE)
+            state = transform(Image.open(png_state)).to(self.device)
             if png_next_state is not None:
-                next_state = transform(Image.open(png_next_state)).to(DEVICE)
+                next_state = transform(Image.open(png_next_state)).to(self.device)
         return next_state, state
 
     def states_to_tensor(self, next_state, state):
@@ -351,30 +357,35 @@ class Learner:
 
     def to_tensor(self, state: np.ndarray) -> torch.Tensor:
         if state is not None:
-            state = torch.from_numpy(state).to(DEVICE)
+            state = torch.from_numpy(state).to(self.device)
             state = state.unsqueeze(0)
         return state
 
+    def separate_batches(self, actions, batch, rewards):
+        state_batch = torch.cat(batch.state).to(self.device)
+        action_batch = torch.cat(actions).to(self.device)
+        reward_batch = torch.cat(rewards).to(self.device)
+        return action_batch, reward_batch, state_batch
 
-def separate_batches(actions, batch, rewards):
-    state_batch = torch.cat(batch.state).to(DEVICE)
-    action_batch = torch.cat(actions).to(DEVICE)
-    reward_batch = torch.cat(rewards).to(DEVICE)
-    return action_batch, reward_batch, state_batch
+    def mask_non_final(self, batch):
+        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)),
+                                      device=self.device, dtype=torch.bool)
+        non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).to(self.device)
+        return non_final_mask, non_final_next_states
 
+    def process_transitions(self, transitions):
+        batch = Transition(*zip(*transitions))
+        actions = tuple((map(lambda a: torch.tensor([[a]], device=self.device), batch.action)))
+        rewards = tuple((map(lambda r: torch.tensor([r], device=self.device), batch.reward)))
+        return batch, actions, rewards
 
-def mask_non_final(batch):
-    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)),
-                                  device=DEVICE, dtype=torch.bool)
-    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).to(DEVICE)
-    return non_final_mask, non_final_next_states
-
-
-def process_transitions(transitions):
-    batch = Transition(*zip(*transitions))
-    actions = tuple((map(lambda a: torch.tensor([[a]], device=DEVICE), batch.action)))
-    rewards = tuple((map(lambda r: torch.tensor([r], device=DEVICE), batch.reward)))
-    return batch, actions, rewards
+    def decode_stacked_frames(self, png_state: List[io.BytesIO]) -> torch.Tensor:
+        transform = transforms.ToTensor()
+        result = []
+        for f in png_state:
+            frame = transform(Image.open(f))
+            result.append(frame.squeeze())
+        return torch.stack(result).unsqueeze(0).to(self.device)
 
 
 def get_state(obs: LazyFrames, device: str) -> State:
@@ -464,7 +475,7 @@ class Actor:
     def main_worker(self):
         self.set_num_threads(1)
         self.logger = get_logger_from_thread(self.log_queue)
-        self.logger.debug(f"Actor-{self.id} started")
+        self.logger.info(f"Actor-{self.id} started on device {self.device}")
 
         for self.episode in range(1, self.n_episodes + 1):
             self.run_episode()
@@ -547,7 +558,7 @@ class Actor:
 
     def select_soft_action(self, state) -> int:
         with torch.no_grad():
-            q = self.policy.forward(state.to(DEVICE))
+            q = self.policy.forward(state.to(self.device))
             v = self.policy.getV(q).squeeze()
             dist = torch.exp((q - v) / self.policy.alpha)
             dist = dist / torch.sum(dist)
@@ -647,15 +658,6 @@ def wait_event_not_set(event, timeout=None):
 
     if elapsed >= timeout:
         raise TimeoutError
-
-
-def decode_stacked_frames(png_state: List[io.BytesIO]) -> torch.Tensor:
-    transform = transforms.ToTensor()
-    result = []
-    for f in png_state:
-        frame = transform(Image.open(f))
-        result.append(frame.squeeze())
-    return torch.stack(result).unsqueeze(0).to(DEVICE)
 
 
 class Replay:
