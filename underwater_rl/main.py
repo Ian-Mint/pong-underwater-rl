@@ -56,7 +56,15 @@ ProcessedBatch = namedtuple(
     'ProcessedBatch', ('actions', 'rewards', 'states', 'non_final_mask', 'non_final_next_states', 'idxs', 'weights')
 )
 HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
-State = namedtuple('State', ('cpu', 'cuda'))
+
+
+class State:
+    def __init__(self, state: Union[torch.Tensor, None], device: str = DEVICE):
+        if state is None:
+            self.cpu, self.cuda = None, None
+        else:
+            self.cpu = state
+            self.cuda = state.to(device, non_blocking=True)
 
 
 class ParamPipe:
@@ -393,7 +401,7 @@ def get_state(obs: LazyFrames, device: str) -> State:
     state = state.transpose((2, 0, 1))
     state = torch.from_numpy(state)
     state = state.unsqueeze(0)
-    return State(state, state.to(device, non_blocking=True))
+    return State(state, device)
 
 
 class Actor:
@@ -515,13 +523,15 @@ class Actor:
         self.total_steps += 1
 
         action = self.select_action(state.cuda)
+        del state.cuda
+
         self.dispatch_render()
         obs, reward, done, info = self.env.step(action)
         total_reward += reward
         if not done:
             next_state = get_state(obs, self.device)
         else:
-            next_state = State(None, None)
+            next_state = State(None)
         if not self.test_mode:
             self.memory_queue.put(
                 Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward)
