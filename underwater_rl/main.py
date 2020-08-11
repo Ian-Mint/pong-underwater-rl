@@ -52,10 +52,33 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets de
 
 # Utility classes
 Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward'))
-ProcessedBatch = namedtuple(
-    'ProcessedBatch', ('actions', 'rewards', 'states', 'non_final_mask', 'non_final_next_states', 'idxs', 'weights')
-)
 HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
+
+
+class ProcessedBatch:
+    def __init__(self,
+                 actions: torch.Tensor,
+                 rewards: torch.Tensor,
+                 states: torch.Tensor,
+                 non_final_mask: torch.Tensor,
+                 non_final_next_states: torch.Tensor,
+                 idxs: None,
+                 weights: None):
+        self.actions = actions
+        self.rewards = rewards
+        self.states = states
+        self.non_final_mask = non_final_mask
+        self.non_final_next_states = non_final_next_states
+        self.idxs = idxs
+        self.weights = weights
+
+    def to(self, device, non_blocking=True):
+        self.actions = self.actions.to(device, non_blocking=non_blocking)
+        self.rewards = self.rewards.to(device, non_blocking=non_blocking)
+        self.states = self.states.to(device, non_blocking=non_blocking)
+        self.non_final_mask = self.non_final_mask.to(device, non_blocking=non_blocking)
+        self.non_final_next_states = self.non_final_next_states.to(device, non_blocking=non_blocking)
+        return self
 
 
 class State:
@@ -268,7 +291,7 @@ class Learner:
             processed_batch = self.sample_queue.get()
             self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after get')
 
-        return processed_batch
+        return processed_batch.to(self.device)
 
     def forward_policy(self, action_batch, state_batch):
         return self.policy(state_batch).gather(1, action_batch)
@@ -314,7 +337,9 @@ class Learner:
 
     def memory_decoder(self, compress=False):
         """
-        Decoder worker to be run alongside Learner
+        Decoder worker to be run alongside Learner. To save GPU memory, we leave it to the Learner to push tensors to
+        GPU.
+
         :param compress: If true, compress frames as PNG images. Saves ~50% memory, but will require multiple workers to
                          feed the learner quickly enough.
         """
@@ -345,7 +370,6 @@ class Learner:
                                              non_final_mask, non_final_next_states,
                                              idxs=None, weights=None)
 
-            # todo: make sure all tensors are pushed to self.device
             self.sample_queue.put(processed_batch)
             self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after put')
 
@@ -357,9 +381,9 @@ class Learner:
             if png_next_state is not None:
                 next_state = self.decode_stacked_frames(png_next_state)
         else:
-            state = transform(Image.open(png_state)).to(self.device)
+            state = transform(Image.open(png_state)).to('cpu')
             if png_next_state is not None:
-                next_state = transform(Image.open(png_next_state)).to(self.device)
+                next_state = transform(Image.open(png_next_state)).to('cpu')
         return next_state, state
 
     def states_to_tensor(self, next_state, state):
@@ -369,26 +393,26 @@ class Learner:
 
     def to_tensor(self, state: np.ndarray) -> torch.Tensor:
         if state is not None:
-            state = torch.from_numpy(state).to(self.device)
+            state = torch.from_numpy(state).to('cpu')
             state = state.unsqueeze(0)
         return state
 
     def separate_batches(self, actions, batch, rewards):
-        state_batch = torch.cat(batch.state).to(self.device)
-        action_batch = torch.cat(actions).to(self.device)
-        reward_batch = torch.cat(rewards).to(self.device)
+        state_batch = torch.cat(batch.state).to('cpu')
+        action_batch = torch.cat(actions).to('cpu')
+        reward_batch = torch.cat(rewards).to('cpu')
         return action_batch, reward_batch, state_batch
 
     def mask_non_final(self, batch):
         non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)),
-                                      device=self.device, dtype=torch.bool)
-        non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).to(self.device)
+                                      device='cpu', dtype=torch.bool)
+        non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).to('cpu')
         return non_final_mask, non_final_next_states
 
     def process_transitions(self, transitions):
         batch = Transition(*zip(*transitions))
-        actions = tuple((map(lambda a: torch.tensor([[a]], device=self.device), batch.action)))
-        rewards = tuple((map(lambda r: torch.tensor([r], device=self.device), batch.reward)))
+        actions = tuple((map(lambda a: torch.tensor([[a]], device='cpu'), batch.action)))
+        rewards = tuple((map(lambda r: torch.tensor([r], device='cpu'), batch.reward)))
         return batch, actions, rewards
 
     def decode_stacked_frames(self, png_state: List[io.BytesIO]) -> torch.Tensor:
@@ -397,7 +421,7 @@ class Learner:
         for f in png_state:
             frame = transform(Image.open(f))
             result.append(frame.squeeze())
-        return torch.stack(result).unsqueeze(0).to(self.device)
+        return torch.stack(result).unsqueeze(0).to('cpu')
 
 
 def get_state(obs: LazyFrames, device: str) -> State:
