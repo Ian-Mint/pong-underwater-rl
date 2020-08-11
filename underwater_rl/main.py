@@ -49,11 +49,14 @@ LOG_INTERVAL = 20  # number of episodes between logging
 CHECKPOINT_INTERVAL = 100  # number of epochs between storing a checkpoint
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
-# warnings.filterwarnings("ignore", category=UserWarning)
+
+# Utility classes
 Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward'))
 ProcessedBatch = namedtuple(
-    'ProcessedBatch', ('actions', 'rewards', 'states', 'non_final_mask', 'non_final_next_states', 'idxs', 'weights'))
+    'ProcessedBatch', ('actions', 'rewards', 'states', 'non_final_mask', 'non_final_next_states', 'idxs', 'weights')
+)
 HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
+State = namedtuple('State', ('cpu', 'cuda'))
 
 
 class ParamPipe:
@@ -69,6 +72,7 @@ def get_logger_from_thread(log_queue):
     return logger
 
 
+# Main classes
 class Learner:
     def __init__(self,
                  optimizer: Callable,
@@ -79,15 +83,16 @@ class Learner:
                  log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]]):
         """
+        In two separate processes, decodes sampled data and runs training.
 
         :param optimizer: The selected type of optimizer
-        :param model:
-        :param replay_out_queue:
-        :param sample_queue:
-        :param pipes:
-        :param checkpoint_path:
-        :param log_queue:
-        :param learning_params:
+        :param model: The initialized model object to be copied into the learner
+        :param replay_out_queue: sample batches are pulled from this queue for decoding
+        :param sample_queue: decoded batches are put on this queue for training
+        :param pipes: list of `ParamPipe` objects for communicating with Actors
+        :param checkpoint_path: Checkpoint save path
+        :param log_queue: Queue object to be pushed to the log handler for the learner process
+        :param learning_params: Parameters to control learning
         """
         if not isinstance(model, DQN):
             # todo: allow other kinds of models
@@ -161,7 +166,6 @@ class Learner:
     def copy_params(self):
         """
         Update the pipe every second. Keep a lock to the pipe while it is being updated.
-        :return:
         """
         while True:
             with self.params_lock:
@@ -172,8 +176,8 @@ class Learner:
     def send_params(self, pipe: ParamPipe):
         """
         Thread to send params through `pipe`
+
         :param pipe:
-        :return:
         """
         while self.params is None:
             time.sleep(1)
@@ -373,11 +377,12 @@ def process_transitions(transitions):
     return batch, actions, rewards
 
 
-def get_state(obs):
+def get_state(obs: LazyFrames, device: str) -> State:
     state = np.array(obs)
     state = state.transpose((2, 0, 1))
     state = torch.from_numpy(state)
-    return state.unsqueeze(0)
+    state = state.unsqueeze(0)
+    return State(state, state.to(device, non_blocking=True))
 
 
 class Actor:
@@ -395,19 +400,17 @@ class Actor:
                  actor_params: Dict[str, Union[int, float]],
                  image_dir: str = None):
         """
-        Main training loop
+        Continually steps the environment and pushes experiences to replay memory
 
-        :param replay_in_queue:
-        :param pipe:
+        :param pipe: `ParamPipe` object for communication with the learner
         :param n_episodes: Number of episodes over which to train or test
         :param render_mode: How and whether to visibly render states
-        :param memory_queue: The queue that experiences are put in for storage
-        :param load_params_event: Event used to trigger parameter update
-        :param params_in: Pipe for receiving parameter update
+        :param memory_queue: The queue that experiences are put in for encoding
+        :param replay_in_queue: The queue of encoded experiences for storage
         :param global_args: The namespace returned bye the global argument parser
         :param log_queue: Queue used to pass logging information to a handler
         :param actor_params: dictionary of parameters used to determine actor behavior
-        :param image_dir: required if render_mode is not False
+        :param image_dir: required if render_mode is not `False`
         """
         self.pipe = pipe
         self.replay_in_queue = replay_in_queue
@@ -425,6 +428,13 @@ class Actor:
         self.eps_decay = actor_params['eps_decay']
         self.eps_end = actor_params['eps_end']
         self.eps_start = actor_params['eps_start']
+
+        # use GPU for inference if we have an extra one
+        if torch.cuda.device_count() > 1:
+            self.device = 'cuda:1'
+        else:
+            self.device = 'cpu'
+        self.policy = self.policy.to(self.device)
 
         self.id = self.counter
         type(self).counter += 1
@@ -452,8 +462,10 @@ class Actor:
         self.main_proc.start()
 
     def main_worker(self):
+        self.set_num_threads(1)
         self.logger = get_logger_from_thread(self.log_queue)
         self.logger.debug(f"Actor-{self.id} started")
+
         for self.episode in range(1, self.n_episodes + 1):
             self.run_episode()
             self.logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
@@ -461,6 +473,10 @@ class Actor:
         self.env.close()
         self.finish_rendering()
         self.logger.info(f"Actor-{self.id} done")
+
+    def set_num_threads(self, n_threads: int):
+        if self.device == 'cpu':
+            torch.set_num_threads(n_threads)
 
     def update_params(self):
         self.logger.debug(f"Actor-{self.id} updating params")
@@ -472,8 +488,8 @@ class Actor:
 
     def run_episode(self):
         obs = self.env.reset()
-        state = get_state(obs)
-        assert state.size() == (1, 4, 84, 84), self.logger.error(f"state is unexpected size: {state.size()}")
+        state = get_state(obs, self.device)
+        assert state.cpu.size() == (1, 4, 84, 84), self.logger.error(f"state is unexpected size: {state.cpu.size()}")
         total_reward = 0.0
         for steps in count():
             done, total_reward, state = self.run_step(state, total_reward)
@@ -487,16 +503,18 @@ class Actor:
     def run_step(self, state, total_reward):
         self.total_steps += 1
 
-        action = self.select_action(state)
+        action = self.select_action(state.cuda)
         self.dispatch_render()
         obs, reward, done, info = self.env.step(action)
         total_reward += reward
         if not done:
-            next_state = get_state(obs)
+            next_state = get_state(obs, self.device)
         else:
-            next_state = None
+            next_state = State(None, None)
         if not self.test_mode:
-            self.memory_queue.put(Transition(self.id, self.total_steps, state, action, next_state, reward))
+            self.memory_queue.put(
+                Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward)
+            )
             self.logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after put')
         return done, total_reward, next_state
 
