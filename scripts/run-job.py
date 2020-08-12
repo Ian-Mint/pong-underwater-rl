@@ -86,7 +86,6 @@ if __name__ == '__main__':
         args.file = [args.file]
     assert len(args.name) == len(args.file), "must provide an experiment name for each config file"
 
-
     experiments = load_experiments(args.file)
     experiments_options = get_options_strings(experiments, args.name)
     job = load_job_template()
@@ -122,7 +121,7 @@ if __name__ == '__main__':
         cmd += '; '.join(commands[idx + len(args.name):])
 
     job['spec']['template']['spec']['containers'][0]['args'][0] = cmd
-    job['spec']['template']['spec']['containers'][0]['resources']['limits']['memory'] = f'{round(args.memory * 1.2):d}Gi'
+    job['spec']['template']['spec']['containers'][0]['resources']['limits']['memory'] = f'{args.memory:d}Gi'
     job['spec']['template']['spec']['containers'][0]['resources']['limits']['nvidia.com/gpu'] = args.gpu
     job['spec']['template']['spec']['containers'][0]['resources']['limits']['cpu'] = args.cpu
     job['spec']['template']['spec']['containers'][0]['resources']['requests']['memory'] = f'{args.memory}Gi'

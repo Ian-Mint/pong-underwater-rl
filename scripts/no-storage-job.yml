@@ -35,9 +35,9 @@ spec:
             cpu: "2"
             ephemeral-storage: 20Gi
           requests:
-            memory: 6Gi
+            memory: 8Gi
             nvidia.com/gpu: "1"
-            cpu: "1"
+            cpu: "2"
             ephemeral-storage: 20Gi
         env:
         - name: GIT_USERNAME
