@@ -243,7 +243,7 @@ def main_training_loop(n_episodes, render_mode=False):
         train_pong.initial(args.store_dir, logger=logger)
     for episode in range(1, n_episodes + 1):
         train_episode(episode, render_mode, save_dir)
-        if args.train_prediction and episode > n_episodes//100:
+        if args.train_prediction and args.pred-episode < episode <= args.pred-episode+1000:
             if episode%20 == 1:
                 logger.info(f'Start training prediction on {device} in episode {episode}~{episode+19}')
             train_prediction()
@@ -644,6 +644,8 @@ def get_parser():
                          help="network training batch size or sequence length for recurrent networks")
     rl_args.add_argument('--train-prediction', dest='train_prediction', default=False, action='store_true',
                          help='train prediction(default: False)')
+    rl_args.add_argument('--pred-episode', dest='pred_episode', default=1000, type=int,
+                         help="when to start training prediction model")
     
     '''resume args'''
     resume_args = parser.add_argument_group("Resume", "Store experiments / Resume training")
