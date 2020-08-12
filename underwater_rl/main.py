@@ -289,6 +289,7 @@ class Learner:
             raise NotImplementedError("Prioritized replay not yet implemented")
         else:
             processed_batch = self.sample_queue.get()
+            # TODO: separate log files. Log queue is overfilling
             self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after get')
 
         return processed_batch.to(self.device)
@@ -636,7 +637,7 @@ class Actor:
         self.logger.debug("Memory encoder process started")
         while True:
             actor_id, step_number, state, action, next_state, reward = self.memory_queue.get()
-            self.logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after get')
+            # self.logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after get')
             assert isinstance(state, torch.Tensor), self.logger.error(f"state must be a Tensor, not {type(state)}")
             assert isinstance(next_state, (torch.Tensor, type(None))), \
                 self.logger.error(f"next_state must be a Tensor or None, not{type(next_state)}")
@@ -652,7 +653,7 @@ class Actor:
                 self.replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
             else:
                 self.replay_in_queue.put(Transition(actor_id, step_number, state, action, next_state, reward))
-            self.logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after put')
+            # self.logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after put')
 
     def compress_states(self, next_state, state):
         png_next_state = None
