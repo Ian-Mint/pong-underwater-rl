@@ -143,7 +143,7 @@ class Learner:
         self.double = learning_params['double']
         self.architecture = learning_params['architecture']
 
-        self.n_decoder_processes = 4
+        self.n_decoder_processes = 6
         if torch.cuda.device_count() != 0:
             self.device = 'cuda:0'
         else:
@@ -189,6 +189,7 @@ class Learner:
         self.policy_lock = threading.Lock()
         self.params_lock = threading.Lock()
 
+        # TODO: put this stuff in a new process instead of threads so that we get 100% CPU usage on the learner
         param_update_thread = threading.Thread(target=self.copy_params, name='UpdateParams', daemon=True)
         param_update_thread.start()
         for n, p in enumerate(self.pipes):
@@ -206,13 +207,13 @@ class Learner:
 
     def copy_params(self):
         """
-        Update the pipe every second. Keep a lock to the pipe while it is being updated.
+        Update the pipe every 2.5 seconds. Keep a lock to the pipe while it is being updated.
         """
         while True:
             with self.params_lock:
                 with self.policy_lock:
                     self.params = deepcopy(self.policy).to('cpu').state_dict()
-            time.sleep(1)
+            time.sleep(2.5)
 
     def send_params(self, pipe: ParamPipe):
         """
@@ -1051,7 +1052,7 @@ def get_communication_objects(n_pipes) -> Tuple[mp.Queue, mp.Queue, mp.Queue, mp
     memory_queue = torch.multiprocessing.Queue(maxsize=1000)
     replay_in_queue = torch.multiprocessing.Queue(maxsize=1000)
     replay_out_queue = torch.multiprocessing.Queue(maxsize=10)
-    sample_queue = torch.multiprocessing.Queue(maxsize=10)
+    sample_queue = torch.multiprocessing.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
     return memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes
