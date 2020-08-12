@@ -143,7 +143,7 @@ class Learner:
         self.double = learning_params['double']
         self.architecture = learning_params['architecture']
 
-        self.n_decoder_processes = 2
+        self.n_decoder_processes = 4
         if torch.cuda.device_count() != 0:
             self.device = 'cuda:0'
         else:
