@@ -23,7 +23,7 @@ def initial(store_dir, logger):
     path = os.path.join(store_dir, 'pred.pth.tar')
     torch.save(model.state_dict(), path)
     
-def training(dataloader, store_dir, learning_rate, logger, num_epochs=200):
+def training(dataloader, store_dir, learning_rate, logger, num_epochs=100):
     # initialize
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu") 
     model = EncoderDecoderConvLSTM(nf=64, in_chan=1)
@@ -78,7 +78,7 @@ def testing(dataloader, store_dir):
     return testing_loss.cpu()
 
 def train_dataloader(replay, batch_size=10):
-    transitions = replay.sample(5000)
+    transitions = replay.sample(1000)
     batch = Transition(*zip(*transitions))
     state = torch.cat([batch.state[i] for i,s in enumerate(batch.next_state) if s is not None])
     next_state = torch.cat([s for s in batch.next_state if s is not None])
