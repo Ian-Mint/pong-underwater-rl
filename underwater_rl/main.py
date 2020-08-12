@@ -290,8 +290,8 @@ class Learner:
             raise NotImplementedError("Prioritized replay not yet implemented")
         else:
             processed_batch = self.sample_queue.get()
-            # TODO: separate log files. Log queue is overfilling
-            self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after get')
+            if self.sample_queue.empty():
+                self.logger.debug(f'sample_queue EMPTY')
 
         return processed_batch.to(self.device)
 
@@ -350,7 +350,8 @@ class Learner:
 
         while True:
             batch = self.replay_out_queue.get()
-            self.logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after get')
+            if self.replay_out_queue.empty():
+                self.logger.debug(f'replay_out_queue EMPTY')
 
             next_state = None
             decoded_batch = []
@@ -373,7 +374,8 @@ class Learner:
                                              idxs=None, weights=None)
 
             self.sample_queue.put(processed_batch)
-            self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after put')
+            if self.sample_queue.full():
+                self.logger.debug(f'sample_queue FULL')
 
     def decompress_states(self, png_next_state, png_state):
         transform = transforms.ToTensor()
@@ -565,7 +567,8 @@ class Actor:
             self.memory_queue.put(
                 Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward)
             )
-            self.logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after put')
+            if self.memory_queue.full():
+                self.logger.debug(f'memory_queue FULL')
         return done, total_reward, next_state
 
     def select_action(self, state):
@@ -638,7 +641,8 @@ class Actor:
         self.logger.debug("Memory encoder process started")
         while True:
             actor_id, step_number, state, action, next_state, reward = self.memory_queue.get()
-            # self.logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after get')
+            if self.memory_queue.empty():
+                self.logger.debug(f'memory_queue EMPTY')
             assert isinstance(state, torch.Tensor), self.logger.error(f"state must be a Tensor, not {type(state)}")
             assert isinstance(next_state, (torch.Tensor, type(None))), \
                 self.logger.error(f"next_state must be a Tensor or None, not{type(next_state)}")
@@ -654,7 +658,8 @@ class Actor:
                 self.replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
             else:
                 self.replay_in_queue.put(Transition(actor_id, step_number, state, action, next_state, reward))
-            # self.logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after put')
+            if self.replay_in_queue.full():
+                self.logger.debug(f'replay_in_queue FULL')
 
     def compress_states(self, next_state, state):
         png_next_state = None
@@ -775,7 +780,8 @@ class Replay:
             sample = self.replay_in_queue.get()
             with self.lock:
                 self.memory.append(sample)
-            self.logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after get')
+            if self.replay_in_queue.empty():
+                self.logger.debug(f'replay_in_queue EMPTY')
 
     def sample_worker(self):
         self.logger.debug("Replay memory sample worker started")
@@ -786,7 +792,8 @@ class Replay:
                 with self.lock:
                     batch = random.sample(self.memory, self.batch_size)
                 self.replay_out_queue.put(batch)
-                self.logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after put')
+                if self.replay_out_queue.full():
+                    self.logger.debug(f'replay_out_queue FULL')
             else:
                 time.sleep(1)
                 self.logger.debug(f'memory length: {memory_length}')
