@@ -1,14 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import io
-import math
 import logging
-from logging.handlers import QueueHandler
-# todo: use torch.multiprocessing: https://pytorch.org/docs/stable/multiprocessing.html#module-torch.multiprocessing
-import torch.multiprocessing
+import math
 import multiprocessing as mp
 import os
-import pickle
 import random
 import shutil
 import sys
@@ -17,11 +13,13 @@ import time
 from collections import namedtuple, deque
 from copy import deepcopy
 from itertools import count
-from typing import Union, List, Dict, Tuple
+from logging.handlers import QueueHandler
+from typing import Union, List, Dict, Tuple, Callable
 
 import gym
 import numpy as np
 import torch
+import torch.multiprocessing
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
@@ -51,11 +49,45 @@ LOG_INTERVAL = 20  # number of episodes between logging
 CHECKPOINT_INTERVAL = 100  # number of epochs between storing a checkpoint
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
-# warnings.filterwarnings("ignore", category=UserWarning)
+
+# Utility classes
 Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward'))
-ProcessedBatch = namedtuple(
-    'ProcessedBatch', ('actions', 'rewards', 'states', 'non_final_mask', 'non_final_next_states', 'idxs', 'weights'))
 HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
+
+
+class ProcessedBatch:
+    def __init__(self,
+                 actions: torch.Tensor,
+                 rewards: torch.Tensor,
+                 states: torch.Tensor,
+                 non_final_mask: torch.Tensor,
+                 non_final_next_states: torch.Tensor,
+                 idxs: None,
+                 weights: None):
+        self.actions = actions
+        self.rewards = rewards
+        self.states = states
+        self.non_final_mask = non_final_mask
+        self.non_final_next_states = non_final_next_states
+        self.idxs = idxs
+        self.weights = weights
+
+    def to(self, device, non_blocking=True):
+        self.actions = self.actions.to(device, non_blocking=non_blocking)
+        self.rewards = self.rewards.to(device, non_blocking=non_blocking)
+        self.states = self.states.to(device, non_blocking=non_blocking)
+        self.non_final_mask = self.non_final_mask.to(device, non_blocking=non_blocking)
+        self.non_final_next_states = self.non_final_next_states.to(device, non_blocking=non_blocking)
+        return self
+
+
+class State:
+    def __init__(self, state: Union[torch.Tensor, None], device: str = DEVICE):
+        if state is None:
+            self.cpu, self.cuda = None, None
+        else:
+            self.cpu = state
+            self.cuda = state.to(device, non_blocking=True)
 
 
 class ParamPipe:
@@ -71,15 +103,34 @@ def get_logger_from_thread(log_queue):
     return logger
 
 
+# Main classes
 class Learner:
-    def __init__(self, optimizer, model, sample_queue: torch.multiprocessing.Queue, pipes: List[ParamPipe],
-                 checkpoint_path: str, log_queue: torch.multiprocessing.Queue,
+    def __init__(self,
+                 optimizer: Callable,
+                 model,
+                 replay_out_queue: torch.multiprocessing.Queue,
+                 sample_queue: torch.multiprocessing.Queue,
+                 pipes: List[ParamPipe], checkpoint_path: str,
+                 log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]]):
+        """
+        In two separate processes, decodes sampled data and runs training.
+
+        :param optimizer: The selected type of optimizer
+        :param model: The initialized model object to be copied into the learner
+        :param replay_out_queue: sample batches are pulled from this queue for decoding
+        :param sample_queue: decoded batches are put on this queue for training
+        :param pipes: list of `ParamPipe` objects for communicating with Actors
+        :param checkpoint_path: Checkpoint save path
+        :param log_queue: Queue object to be pushed to the log handler for the learner process
+        :param learning_params: Parameters to control learning
+        """
         if not isinstance(model, DQN):
             # todo: allow other kinds of models
             raise NotImplementedError("Only DQN models are implemented for now")
 
         # todo: currently, batch_size does not control the batch size. It is only used for calculating total samples
+        self.replay_out_queue = replay_out_queue
         self.sample_queue = sample_queue
         self.pipes = pipes
         self.log_queue = log_queue
@@ -92,8 +143,14 @@ class Learner:
         self.double = learning_params['double']
         self.architecture = learning_params['architecture']
 
-        self.policy = deepcopy(model).to(DEVICE)
-        self.target = deepcopy(model).to(DEVICE)
+        self.n_decoder_processes = 2
+        if torch.cuda.device_count() != 0:
+            self.device = 'cuda:0'
+        else:
+            self.device = 'cpu'
+
+        self.policy = deepcopy(model).to(self.device)
+        self.target = deepcopy(model).to(self.device)
         self.optimizer = optimizer(self.policy.parameters(), lr=self.learning_rate)
 
         self.params = None
@@ -103,21 +160,31 @@ class Learner:
         self.loss = None
         self.epoch = 0
 
-        self.proc = mp.Process(target=self.main_worker, name="Learner")
+        self.main_proc = mp.Process(target=self.main_worker, name="Learner")
 
     def __del__(self):
         self.save_checkpoint()
         self.terminate()
 
     def terminate(self):
-        self.proc.terminate()
-        self.proc.join()
+        self.main_proc.terminate()
+        self.main_proc.join()
 
     def start(self):
-        self.proc.start()
+        # A started process has a `__weakref__` attribute that is not picklable. So, a started process cannot be passed
+        # by context to another process. In this case, only one of the processes can be stored in `self`, and the other
+        # process must be started before the `self` process.
+        for i in range(self.n_decoder_processes):
+            decoder_proc = mp.Process(target=self.memory_decoder,
+                                      name=f"MemoryDecoder-{i}",
+                                      kwargs=dict(compress=False),
+                                      daemon=True)
+            decoder_proc.start()
+        self.main_proc.start()
 
     def main_worker(self):
         self.logger = get_logger_from_thread(self.log_queue)
+        self.logger.info(f"Learner started on device {self.device}")
 
         self.policy_lock = threading.Lock()
         self.params_lock = threading.Lock()
@@ -125,7 +192,7 @@ class Learner:
         param_update_thread = threading.Thread(target=self.copy_params, name='UpdateParams', daemon=True)
         param_update_thread.start()
         for n, p in enumerate(self.pipes):
-            t = threading.Thread(target=self.send_params, args=(p, ), name=f'SendParams-{n}', daemon=True)
+            t = threading.Thread(target=self.send_params, args=(p,), name=f'SendParams-{n}', daemon=True)
             t.start()
 
         self.optimizer_loop()
@@ -140,19 +207,18 @@ class Learner:
     def copy_params(self):
         """
         Update the pipe every second. Keep a lock to the pipe while it is being updated.
-        :return:
         """
         while True:
             with self.params_lock:
                 with self.policy_lock:
-                    self.params = deepcopy(self.policy.state_dict())
+                    self.params = deepcopy(self.policy).to('cpu').state_dict()
             time.sleep(1)
 
     def send_params(self, pipe: ParamPipe):
         """
         Thread to send params through `pipe`
+
         :param pipe:
-        :return:
         """
         while self.params is None:
             time.sleep(1)
@@ -166,13 +232,13 @@ class Learner:
                 time.sleep(0.01)
 
     def optimize_model(self):
-        action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
+        batch = self.sample()
 
-        state_action_values = self.forward_policy(action_batch, state_batch)
-        next_state_values = self.forward_target(non_final_mask, non_final_next_states)
-        expected_state_action_values = (next_state_values * self.gamma) + reward_batch.float()
+        state_action_values = self.forward_policy(batch.actions, batch.states)
+        next_state_values = self.forward_target(batch.non_final_mask, batch.non_final_next_states)
+        expected_state_action_values = (next_state_values * self.gamma) + batch.rewards.float()
 
-        loss = self.get_loss(state_action_values, expected_state_action_values, idxs, weights)
+        loss = self.get_loss(state_action_values, expected_state_action_values, batch.idxs, batch.weights)
         self.logger.debug(f"loss norm: {loss.norm()}")
         self.step_optimizer(loss)
 
@@ -193,7 +259,7 @@ class Learner:
         action_batch, reward_batch, state_batch, non_final_mask, non_final_next_states, idxs, weights = self.sample()
 
         next_states_v = torch.cat(
-            [s if s is not None else state_batch[i] for i, s in enumerate(state_batch)]).to(DEVICE)
+            [s if s is not None else state_batch[i] for i, s in enumerate(state_batch)]).to(self.device)
         dones = np.stack(tuple(map(lambda s: s is None, state_batch)))
         # next state distribution
         next_distr_v, next_qvals_v = self.target.both(next_states_v)
@@ -208,7 +274,7 @@ class Learner:
         distr_v = self.policy(state_batch)
         state_action_values = distr_v[range(self.batch_size), action_batch.view(-1)]
         state_log_sm_v = F.log_softmax(state_action_values, dim=1)
-        proj_distr_v = torch.tensor(proj_distr).to(DEVICE)
+        proj_distr_v = torch.tensor(proj_distr).to(self.device)
         entropy = (-state_log_sm_v * proj_distr_v).sum(dim=1)
 
         if self.prioritized:  # KL divergence based priority
@@ -225,19 +291,19 @@ class Learner:
             processed_batch = self.sample_queue.get()
             self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after get')
 
-        return processed_batch
+        return processed_batch.to(self.device)
 
     def forward_policy(self, action_batch, state_batch):
         return self.policy(state_batch).gather(1, action_batch)
 
     def forward_target(self, non_final_mask, non_final_next_states):
-        next_state_values = torch.zeros(self.batch_size, device=DEVICE)
+        next_state_values = torch.zeros(self.batch_size, device=self.device)
         if self.double:
             argmax_a_q_sp = self.policy(non_final_next_states).max(1)[1]
             q_sp = self.target(non_final_next_states).detach()
             # noinspection PyTypeChecker
             next_state_values[non_final_mask] = q_sp[
-                torch.arange(torch.sum(non_final_mask), device=DEVICE), argmax_a_q_sp]
+                torch.arange(torch.sum(non_final_mask), device=self.device), argmax_a_q_sp]
         elif self.architecture == 'soft_dqn':
             raise NotImplementedError("soft DQN is not yet implemented")
         else:
@@ -269,57 +335,132 @@ class Learner:
              'epoch': self.epoch},
             os.path.join(self.checkpoint_path))
 
+    def memory_decoder(self, compress=False):
+        """
+        Decoder worker to be run alongside Learner. To save GPU memory, we leave it to the Learner to push tensors to
+        GPU.
 
-def separate_batches(actions, batch, rewards):
-    state_batch = torch.cat(batch.state).to(DEVICE)
-    action_batch = torch.cat(actions).to(DEVICE)
-    reward_batch = torch.cat(rewards).to(DEVICE)
-    return action_batch, reward_batch, state_batch
+        :param compress: If true, compress frames as PNG images. Saves ~50% memory, but will require multiple workers to
+                         feed the learner quickly enough.
+        """
+        self.logger = get_logger_from_thread(self.log_queue)
+        self.logger.debug("Memory decoder process started")
+
+        while True:
+            batch = self.replay_out_queue.get()
+            self.logger.debug(f'replay_out_queue length: {self.replay_out_queue.qsize()} after get')
+
+            next_state = None
+            decoded_batch = []
+            if compress:
+                for transition in batch:
+                    actor_id, step_number, png_state, action, png_next_state, reward = transition
+                    next_state, state = self.decompress_states(png_next_state, png_state)
+                    decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
+            else:
+                for transition in batch:
+                    actor_id, step_number, state, action, next_state, reward = transition
+                    next_state, state = self.states_to_tensor(next_state, state)
+                    decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
+
+            batch, actions, rewards = self.process_transitions(decoded_batch)
+            non_final_mask, non_final_next_states = self.mask_non_final(batch)
+            action_batch, reward_batch, state_batch = self.separate_batches(actions, batch, rewards)
+            processed_batch = ProcessedBatch(action_batch, reward_batch, state_batch,
+                                             non_final_mask, non_final_next_states,
+                                             idxs=None, weights=None)
+
+            self.sample_queue.put(processed_batch)
+            self.logger.debug(f'sample_queue length: {self.sample_queue.qsize()} after put')
+
+    def decompress_states(self, png_next_state, png_state):
+        transform = transforms.ToTensor()
+        next_state = None
+        if isinstance(png_state, list):
+            state = self.decode_stacked_frames(png_state)
+            if png_next_state is not None:
+                next_state = self.decode_stacked_frames(png_next_state)
+        else:
+            state = transform(Image.open(png_state)).to('cpu')
+            if png_next_state is not None:
+                next_state = transform(Image.open(png_next_state)).to('cpu')
+        return next_state, state
+
+    def states_to_tensor(self, next_state, state):
+        state = self.to_tensor(state)
+        next_state = self.to_tensor(next_state)
+        return next_state, state
+
+    def to_tensor(self, state: np.ndarray) -> torch.Tensor:
+        if state is not None:
+            state = torch.from_numpy(state).to('cpu')
+            state = state.unsqueeze(0)
+        return state
+
+    def separate_batches(self, actions, batch, rewards):
+        state_batch = torch.cat(batch.state).to('cpu')
+        action_batch = torch.cat(actions).to('cpu')
+        reward_batch = torch.cat(rewards).to('cpu')
+        return action_batch, reward_batch, state_batch
+
+    def mask_non_final(self, batch):
+        non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)),
+                                      device='cpu', dtype=torch.bool)
+        non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).to('cpu')
+        return non_final_mask, non_final_next_states
+
+    def process_transitions(self, transitions):
+        batch = Transition(*zip(*transitions))
+        actions = tuple((map(lambda a: torch.tensor([[a]], device='cpu'), batch.action)))
+        rewards = tuple((map(lambda r: torch.tensor([r], device='cpu'), batch.reward)))
+        return batch, actions, rewards
+
+    def decode_stacked_frames(self, png_state: List[io.BytesIO]) -> torch.Tensor:
+        transform = transforms.ToTensor()
+        result = []
+        for f in png_state:
+            frame = transform(Image.open(f))
+            result.append(frame.squeeze())
+        return torch.stack(result).unsqueeze(0).to('cpu')
 
 
-def mask_non_final(batch):
-    non_final_mask = torch.tensor(tuple(map(lambda s: s is not None, batch.next_state)),
-                                  device=DEVICE, dtype=torch.bool)
-    non_final_next_states = torch.cat([s for s in batch.next_state if s is not None]).to(DEVICE)
-    return non_final_mask, non_final_next_states
-
-
-def process_transitions(transitions):
-    batch = Transition(*zip(*transitions))
-    actions = tuple((map(lambda a: torch.tensor([[a]], device=DEVICE), batch.action)))
-    rewards = tuple((map(lambda r: torch.tensor([r], device=DEVICE), batch.reward)))
-    return batch, actions, rewards
-
-
-def get_state(obs):
+def get_state(obs: LazyFrames, device: str) -> State:
     state = np.array(obs)
     state = state.transpose((2, 0, 1))
     state = torch.from_numpy(state)
-    return state.unsqueeze(0)
+    state = state.unsqueeze(0)
+    return State(state, device)
 
 
 class Actor:
     counter = 0
 
-    def __init__(self, model: nn.Module, n_episodes: int, render_mode: Union[str, bool],
-                 memory_queue: torch.multiprocessing.Queue, pipe: ParamPipe, global_args: argparse.Namespace,
-                 log_queue: torch.multiprocessing.Queue, actor_params: Dict[str, Union[int, float]],
+    def __init__(self,
+                 model: nn.Module,
+                 n_episodes: int,
+                 render_mode: Union[str, bool],
+                 memory_queue: torch.multiprocessing.Queue,
+                 replay_in_queue: torch.multiprocessing.Queue,
+                 pipe: ParamPipe,
+                 global_args: argparse.Namespace,
+                 log_queue: torch.multiprocessing.Queue,
+                 actor_params: Dict[str, Union[int, float]],
                  image_dir: str = None):
         """
-        Main training loop
+        Continually steps the environment and pushes experiences to replay memory
 
-        :param pipe:
+        :param pipe: `ParamPipe` object for communication with the learner
         :param n_episodes: Number of episodes over which to train or test
         :param render_mode: How and whether to visibly render states
-        :param memory_queue: The queue that experiences are put in for storage
-        :param load_params_event: Event used to trigger parameter update
-        :param params_in: Pipe for receiving parameter update
+        :param memory_queue: The queue that experiences are put in for encoding
+        :param replay_in_queue: The queue of encoded experiences for storage
         :param global_args: The namespace returned bye the global argument parser
         :param log_queue: Queue used to pass logging information to a handler
         :param actor_params: dictionary of parameters used to determine actor behavior
-        :param image_dir: required if render_mode is not False
+        :param image_dir: required if render_mode is not `False`
         """
         self.pipe = pipe
+        self.replay_in_queue = replay_in_queue
         self.memory_queue = memory_queue
         self.log_queue = log_queue
         self.env = dispatch_make_env(global_args)
@@ -335,6 +476,13 @@ class Actor:
         self.eps_end = actor_params['eps_end']
         self.eps_start = actor_params['eps_start']
 
+        # use GPU for inference if we have an extra one
+        if torch.cuda.device_count() > 1:
+            self.device = 'cuda:1'
+        else:
+            self.device = 'cpu'
+        self.policy = self.policy.to(self.device)
+
         self.id = self.counter
         type(self).counter += 1
 
@@ -343,22 +491,28 @@ class Actor:
         self.total_steps = 0
         self.history = []
 
-        self.proc = mp.Process(target=self.main_worker, name=f"Actor-{self.id}")
+        self.main_proc = mp.Process(target=self.main_worker, name=f"Actor-{self.id}")
 
     def __del__(self):
-        if self.proc.pid is not None:
-            self.proc.terminate()
-            self.proc.join()
+        if self.main_proc.pid is not None:
+            self.main_proc.terminate()
+            self.main_proc.join()
 
     def join(self):
-        self.proc.join()
+        self.main_proc.join()
 
     def start(self):
-        self.proc.start()
+        # See `Learner.start` for explanation about why `encoder_proc` is not made an attribute.
+        encoder_proc = mp.Process(target=self.memory_encoder, name=f"Encoder-{self.id}",
+                                  kwargs=dict(compress=False), daemon=True)
+        encoder_proc.start()
+        self.main_proc.start()
 
     def main_worker(self):
+        self.set_num_threads(1)
         self.logger = get_logger_from_thread(self.log_queue)
-        self.logger.debug(f"Actor-{self.id} started")
+        self.logger.info(f"Actor-{self.id} started on device {self.device}")
+
         for self.episode in range(1, self.n_episodes + 1):
             self.run_episode()
             self.logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
@@ -367,8 +521,11 @@ class Actor:
         self.finish_rendering()
         self.logger.info(f"Actor-{self.id} done")
 
+    def set_num_threads(self, n_threads: int):
+        if self.device == 'cpu':
+            torch.set_num_threads(n_threads)
+
     def update_params(self):
-        self.logger.debug(f"Actor-{self.id} updating params")
         self.pipe.event.set()
         wait_event_not_set(self.pipe.event, timeout=None)
         params = self.pipe.conn_in.recv()
@@ -377,8 +534,8 @@ class Actor:
 
     def run_episode(self):
         obs = self.env.reset()
-        state = get_state(obs)
-        assert state.size() == (1, 4, 84, 84), self.logger.error(f"state is unexpected size: {state.size()}")
+        state = get_state(obs, self.device)
+        assert state.cpu.size() == (1, 4, 84, 84), self.logger.error(f"state is unexpected size: {state.cpu.size()}")
         total_reward = 0.0
         for steps in count():
             done, total_reward, state = self.run_step(state, total_reward)
@@ -392,16 +549,20 @@ class Actor:
     def run_step(self, state, total_reward):
         self.total_steps += 1
 
-        action = self.select_action(state)
+        action = self.select_action(state.cuda)
+        del state.cuda
+
         self.dispatch_render()
         obs, reward, done, info = self.env.step(action)
         total_reward += reward
         if not done:
-            next_state = get_state(obs)
+            next_state = get_state(obs, self.device)
         else:
-            next_state = None
+            next_state = State(None)
         if not self.test_mode:
-            self.memory_queue.put(Transition(self.id, self.total_steps, state, action, next_state, reward))
+            self.memory_queue.put(
+                Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward)
+            )
             self.logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after put')
         return done, total_reward, next_state
 
@@ -434,7 +595,7 @@ class Actor:
 
     def select_soft_action(self, state) -> int:
         with torch.no_grad():
-            q = self.policy.forward(state.to(DEVICE))
+            q = self.policy.forward(state.to(self.device))
             v = self.policy.getV(q).squeeze()
             dist = torch.exp((q - v) / self.policy.alpha)
             dist = dist / torch.sum(dist)
@@ -466,6 +627,55 @@ class Actor:
             convert_images_to_video(image_dir=self.image_dir, save_dir=os.path.dirname(self.image_dir))
             shutil.rmtree(self.image_dir)
 
+    def memory_encoder(self, compress=False):
+        """
+        Encoder worker to be run alongside Actors
+        :param compress: if True, compress states as PNG images
+        """
+        self.logger = get_logger_from_thread(self.log_queue)
+        self.logger.debug("Memory encoder process started")
+        while True:
+            actor_id, step_number, state, action, next_state, reward = self.memory_queue.get()
+            self.logger.debug(f'memory_queue length: {self.memory_queue.qsize()} after get')
+            assert isinstance(state, torch.Tensor), self.logger.error(f"state must be a Tensor, not {type(state)}")
+            assert isinstance(next_state, (torch.Tensor, type(None))), \
+                self.logger.error(f"next_state must be a Tensor or None, not{type(next_state)}")
+            assert isinstance(action, int), self.logger.error(f"action must be an integer, not {type(action)}")
+            assert isinstance(reward, (int, float)), self.logger.error(f"reward must be a float, not {type(reward)}")
+
+            state = state.squeeze().numpy()
+            if next_state is not None:
+                next_state = next_state.squeeze().numpy()
+
+            if compress:
+                png_next_state, png_state = self.compress_states(next_state, state)
+                self.replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
+            else:
+                self.replay_in_queue.put(Transition(actor_id, step_number, state, action, next_state, reward))
+            self.logger.debug(f'replay_in_queue length: {self.replay_in_queue.qsize()} after put')
+
+    def compress_states(self, next_state, state):
+        png_next_state = None
+        if state.ndim == 2:
+            png_state = io.BytesIO()
+            png_next_state = io.BytesIO()
+            Image.fromarray(state).save(png_state, format='png')
+            if next_state is not None:
+                Image.fromarray(next_state).save(png_next_state, format='png')
+        else:
+            png_state = self.encode_stacked_frames(state)
+            if next_state is not None:
+                png_next_state = self.encode_stacked_frames(next_state)
+        return png_next_state, png_state
+
+    def encode_stacked_frames(self, state) -> List[io.BytesIO]:
+        result = []
+        for frame in state:
+            f = io.BytesIO()
+            Image.fromarray(frame).save(f, format='png')
+            result.append(f)
+        return result
+
 
 def wait_event_not_set(event, timeout=None):
     """
@@ -485,136 +695,6 @@ def wait_event_not_set(event, timeout=None):
 
     if elapsed >= timeout:
         raise TimeoutError
-
-
-def memory_encoder(memory_queue: torch.multiprocessing.Queue,
-                   replay_in_queue: torch.multiprocessing.Queue,
-                   log_queue: torch.multiprocessing.Queue,
-                   compress=False):
-    """
-    Encoder worker to be run alongside Actors
-    :param replay_in_queue:
-    :param memory_queue:
-    """
-    logger = get_logger_from_thread(log_queue)
-    logger.debug("Memory encoder process started")
-    while True:
-        actor_id, step_number, state, action, next_state, reward = memory_queue.get()
-        logger.debug(f'memory_queue length: {memory_queue.qsize()} after get')
-        assert isinstance(state, torch.Tensor), logger.error(f"state must be a Tensor, not {type(state)}")
-        assert isinstance(next_state, (torch.Tensor, type(None))), \
-            logger.error(f"next_state must be a Tensor or None, not{type(next_state)}")
-        assert isinstance(action, int), logger.error(f"action must be an integer, not {type(action)}")
-        assert isinstance(reward, (int, float)), logger.error(f"reward must be a float, not {type(reward)}")
-
-        state = state.squeeze().numpy()
-        if next_state is not None:
-            next_state = next_state.squeeze().numpy()
-
-        if compress:
-            png_next_state, png_state = compress_states(next_state, state)
-            replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
-        else:
-            replay_in_queue.put(Transition(actor_id, step_number, state, action, next_state, reward))
-        logger.debug(f'replay_in_queue length: {replay_in_queue.qsize()} after put')
-
-
-def compress_states(next_state, state):
-    png_next_state = None
-    if state.ndim == 2:
-        png_state = io.BytesIO()
-        png_next_state = io.BytesIO()
-        Image.fromarray(state).save(png_state, format='png')
-        if next_state is not None:
-            Image.fromarray(next_state).save(png_next_state, format='png')
-    else:
-        png_state = encode_stacked_frames(state)
-        if next_state is not None:
-            png_next_state = encode_stacked_frames(next_state)
-    return png_next_state, png_state
-
-
-def encode_stacked_frames(state) -> List[io.BytesIO]:
-    result = []
-    for frame in state:
-        f = io.BytesIO()
-        Image.fromarray(frame).save(f, format='png')
-        result.append(f)
-    return result
-
-
-def decode_stacked_frames(png_state: List[io.BytesIO]) -> torch.Tensor:
-    transform = transforms.ToTensor()
-    result = []
-    for f in png_state:
-        frame = transform(Image.open(f))
-        result.append(frame.squeeze())
-    return torch.stack(result).unsqueeze(0).to(DEVICE)
-
-
-def memory_decoder(sample_queue, replay_out_queue, log_queue, compress=False):
-    """
-    Decoder worker to be run alongside Learner
-    :param compress: If true, compress frames as PNG images. Saves ~50% memory, but will require multiple workers to 
-                     feed the learner quickly enough.
-    """
-    logger = get_logger_from_thread(log_queue)
-    logger.debug("Memory decoder process started")
-
-    while True:
-        batch = replay_out_queue.get()
-        logger.debug(f'replay_out_queue length: {replay_out_queue.qsize()} after get')
-
-        next_state = None
-        decoded_batch = []
-        if compress:
-            for transition in batch:
-                actor_id, step_number, png_state, action, png_next_state, reward = transition
-                next_state, state = decompress_states(png_next_state, png_state)
-                decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
-        else:
-            for transition in batch:
-                actor_id, step_number, state, action, next_state, reward = transition
-                next_state, state = states_to_tensor(next_state, state)
-                decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
-
-        batch, actions, rewards = process_transitions(decoded_batch)
-        non_final_mask, non_final_next_states = mask_non_final(batch)
-        action_batch, reward_batch, state_batch = separate_batches(actions, batch, rewards)
-        processed_batch = ProcessedBatch(action_batch, reward_batch, state_batch,
-                                         non_final_mask, non_final_next_states,
-                                         idxs=None, weights=None)
-
-        # todo: make sure all tensors are pushed to DEVICE
-        sample_queue.put(processed_batch)
-        logger.debug(f'sample_queue length: {sample_queue.qsize()} after put')
-
-
-def states_to_tensor(next_state, state):
-    state = to_tensor(state)
-    next_state = to_tensor(next_state)
-    return next_state, state
-
-
-def decompress_states(png_next_state, png_state):
-    transform = transforms.ToTensor()
-    next_state = None
-    if isinstance(png_state, list):
-        state = decode_stacked_frames(png_state)
-        if png_next_state is not None:
-            next_state = decode_stacked_frames(png_next_state)
-    else:
-        state = transform(Image.open(png_state)).to(DEVICE)
-        if png_next_state is not None:
-            next_state = transform(Image.open(png_next_state)).to(DEVICE)
-    return next_state, state
-
-
-def to_tensor(state: np.ndarray) -> torch.Tensor:
-    if state is not None:
-        state = torch.from_numpy(state).to(DEVICE)
-        state = state.unsqueeze(0)
-    return state
 
 
 class Replay:
@@ -767,34 +847,6 @@ def initialize_model(architecture) -> nn.Module:
                     'lstm': DRQN,
                     'distributional_dqn': DistributionalDQN}
     return model_lookup[architecture](n_actions=N_ACTIONS)  # Allow users of the model to put it on the desired device
-
-
-def load_checkpoint():
-    # todo: finish implementing this for the new architecture
-    logger = get_logger_from_thread(log_queue)
-    logger.info("Loading the trained model")
-    checkpoint = torch.load(args.checkpoint, map_location=DEVICE)
-
-    policy_net.load_state_dict(checkpoint['Net'])
-    optimizer.load_state_dict(checkpoint['Optimizer'])
-    target_net.load_state_dict(policy_net.state_dict())
-
-    steps_done = checkpoint['Steps_Done']
-    epoch = checkpoint['Epoch']
-
-    history = pickle.load(open(args.history, 'rb'))
-
-    return steps_done, epoch, history
-
-
-def initialize_history():
-    # todo: finish implementing this for the new architecture
-    global steps_done, epoch
-    if args.resume:
-        steps_done, epoch, history = load_checkpoint()
-    else:
-        history = []
-    return history
 
 
 def get_parser():
@@ -952,28 +1004,30 @@ def main():
     # Create subprocesses
     actors = []
     for p in pipes:
-        a = Actor(model=model, n_episodes=args.episodes, render_mode=args.render, memory_queue=memory_queue, pipe=p,
-                  global_args=args, log_queue=log_queue, actor_params=actor_params)
+        a = Actor(model=model,
+                  n_episodes=args.episodes,
+                  render_mode=args.render,
+                  memory_queue=memory_queue,
+                  replay_in_queue=replay_in_queue,
+                  pipe=p,
+                  global_args=args,
+                  log_queue=log_queue,
+                  actor_params=actor_params)
         actors.append(a)
 
-    learner = Learner(optimizer=optim.Adam, model=model, sample_queue=sample_queue, pipes=pipes,
-                      checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'), log_queue=log_queue,
+    learner = Learner(optimizer=optim.Adam,
+                      model=model,
+                      replay_out_queue=replay_out_queue,
+                      sample_queue=sample_queue,
+                      pipes=pipes,
+                      checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
+                      log_queue=log_queue,
                       learning_params=learning_params)
     replay = Replay(replay_in_queue, replay_out_queue, log_queue, replay_params)
 
-    # todo: the more actors we have, the more encoders we need. 10 actors is easily saturating the queue
-    png_encoder_proc = mp.Process(target=memory_encoder,
-                                  args=(memory_queue, replay_in_queue, log_queue, args.compress_state),
-                                  name='PNG Encoder')
-    png_decoder_proc = mp.Process(target=memory_decoder,
-                                  args=(sample_queue, replay_out_queue, log_queue, args.compress_state),
-                                  name='PNG Decoder')
-
     # Start subprocesses
     run_all(actors, 'start')
-    png_encoder_proc.start()
     replay.start()
-    png_decoder_proc.start()
     learner.start()
 
     try:
@@ -983,14 +1037,8 @@ def main():
     except KeyboardInterrupt:
         run_all(actors, '__del__')
     finally:
-        logger.info("terminating PNG Encoder")
-        png_encoder_proc.terminate()
-        logger.info("terminating PNG Decoder")
-        png_decoder_proc.terminate()
         del replay
         del learner
-        png_encoder_proc.join()
-        png_decoder_proc.join()
 
 
 def run_all(actors: List[Actor], method: str, *args, **kwargs):
@@ -1001,8 +1049,8 @@ def run_all(actors: List[Actor], method: str, *args, **kwargs):
 def get_communication_objects(n_pipes) -> Tuple[mp.Queue, mp.Queue, mp.Queue, mp.Queue, List[ParamPipe]]:
     memory_queue = torch.multiprocessing.Queue(maxsize=1000)
     replay_in_queue = torch.multiprocessing.Queue(maxsize=1000)
-    replay_out_queue = torch.multiprocessing.Queue(maxsize=100)
-    sample_queue = torch.multiprocessing.Queue(maxsize=1)
+    replay_out_queue = torch.multiprocessing.Queue(maxsize=10)
+    sample_queue = torch.multiprocessing.Queue(maxsize=10)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
     return memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes

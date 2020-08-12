@@ -1,0 +1,24 @@
+name: torch
+channels:
+  - powerai
+  - conda-forge
+  - pytorch
+  - defaults
+dependencies:
+  - python 3.8.*
+  - pytorch
+  - torchvision
+  - cudatoolkit=10.2.*
+  - scipy
+  - numpy
+  - opencv
+  - pandas
+  - matplotlib
+  - dash
+  - dash-bootstrap-components
+  - flask-caching
+  - yaml
+  - gym
+  - flake8
+
+

@@ -14,7 +14,7 @@ spec:
           git fetch origin {branch};
           git checkout {branch};
           git pull origin {branch};
-          pip install -e gym-dynamic-pong;
+          pip install --no-deps -e gym-dynamic-pong;
           cd underwater_rl;
           python main.py {options};
         volumeMounts:

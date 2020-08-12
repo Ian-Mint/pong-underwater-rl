@@ -15,7 +15,7 @@ spec:
           git clone https://github.com/Ian-Mint/pong-underwater-rl.git --branch {branch};
           cd pong-underwater-rl;
           git checkout -b {job_name};
-          pip install -e gym-dynamic-pong;
+          pip install --no-deps -e gym-dynamic-pong;
           cd underwater_rl;
           python main.py {options};
           git config --global user.name {user};

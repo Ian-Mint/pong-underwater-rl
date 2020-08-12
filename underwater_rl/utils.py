@@ -33,7 +33,7 @@ def get_logger(store_dir) -> Tuple[logging.Logger, mp.Queue]:
         'formatters': {
             'detailed': {
                 'class': 'logging.Formatter',
-                'format': '%(asctime)s %(levelname)-7s | %(processName)-14s: %(process)-5d | %(threadName)-14s | %(message)s'
+                'format': '%(asctime)s %(levelname)-7s | %(processName)-16s: %(process)-5d | %(threadName)-14s | %(message)s'
             },
             'basic': {
                 'class': 'logging.Formatter',
@@ -65,7 +65,7 @@ def get_logger(store_dir) -> Tuple[logging.Logger, mp.Queue]:
             'handlers': ['console', 'info', 'debug']
         },
     }
-    log_queue = mp.Queue(maxsize=10_000)
+    log_queue = mp.Queue(maxsize=100_000)
     logging.config.dictConfig(d)
 
     logger_thread = threading.Thread(target=log_worker, args=(log_queue,), name="LogThread", daemon=True)
