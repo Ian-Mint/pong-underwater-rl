@@ -18,7 +18,7 @@ Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'
 
 def initial(store_dir, logger):
     model = EncoderDecoderConvLSTM(nf=64, in_chan=1)
-    logger.info("Let's use", torch.cuda.device_count(), "GPUs!")
+    logger.info(f"Let's use {torch.cuda.device_count()} GPUs!")
     model = nn.DataParallel(model)
     path = os.path.join(store_dir, 'pred.pth.tar')
     torch.save(model.state_dict(), path)
