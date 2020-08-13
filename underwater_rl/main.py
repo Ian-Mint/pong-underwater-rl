@@ -26,7 +26,7 @@ import shutil
 import sys
 import threading
 import time
-from collections import namedtuple, deque
+from collections import namedtuple, deque, OrderedDict
 from copy import deepcopy
 from itertools import count
 from logging.handlers import QueueHandler
@@ -342,8 +342,14 @@ class Learner(Worker):
         while True:
             with self.params_lock:
                 with self.policy_lock:
-                    self.params = deepcopy(self.policy).to('cpu').state_dict()
+                    self._policy_state_dict_to_params()
             time.sleep(2.5)
+
+    def _policy_state_dict_to_params(self):
+        cuda_state_dict = self.policy.state_dict()
+        self.params = OrderedDict()
+        for k, v in cuda_state_dict.items():
+            self.params[k] = v.to('cpu')
 
     def _send_params(self, pipe: ParamPipe) -> None:
         """
