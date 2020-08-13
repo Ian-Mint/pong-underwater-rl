@@ -1303,7 +1303,7 @@ def get_communication_objects(n_pipes: int) -> Tuple[mp.Queue, mp.Queue, mp.Queu
     """
     memory_queue = mp.Queue(maxsize=1000)
     replay_in_queue = mp.Queue(maxsize=1000)
-    replay_out_queue = mp.Queue(maxsize=10)
+    replay_out_queue = mp.Queue(maxsize=100)
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
