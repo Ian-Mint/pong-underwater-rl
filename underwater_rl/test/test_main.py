@@ -206,44 +206,44 @@ class TestActor(unittest.TestCase):
 
     def test_epsilon_is_1_at_start_of_training_episode_decay(self):
         main.STEPSDECAY = False
-        eps = self.actor.epsilon
+        eps = self.actor._epsilon
         self.assertEqual(1, eps)
 
     def test_epsilon_is_minimum_at_infinite_episodes_and_steps_episode_decay(self):
         main.STEPSDECAY = False
         self.actor.epoch = math.inf
-        eps = self.actor.epsilon
+        eps = self.actor._epsilon
         self.assertEqual(main.EPS_END, eps)
 
     def test_epsilon_is_1_at_start_of_training_steps_decay(self):
         main.STEPSDECAY = True
-        eps = self.actor.epsilon
+        eps = self.actor._epsilon
         self.assertEqual(1, eps)
 
     def test_epsilon_is_minimum_at_infinite_episodes_and_steps_steps_decay(self):
         main.STEPSDECAY = True
         self.actor.total_steps = math.inf
-        eps = self.actor.epsilon
+        eps = self.actor._epsilon
         self.assertEqual(main.EPS_END, eps)
 
     def test_random_action_chosen_at_start_of_training(self):
         with mock.patch.object(type(self.actor.policy), '__call__') as policy:
-            _ = self.actor.select_action(self.state)
+            _ = self.actor._select_action(self.state)
             self.assertFalse(policy.called)
 
     def test_valid_action_chosen_at_start_of_training(self):
-        action = self.actor.select_action(self.state)
+        action = self.actor._select_action(self.state)
         self.assert_valid_action(action)
 
     def test_policy_net_action_chosen_at_end_of_training(self):
-        type(self.actor).epsilon = property(lambda *args: 0)  # mock epsilon to 0
+        type(self.actor)._epsilon = property(lambda *args: 0)  # mock _epsilon to 0
         with mock.patch.object(type(self.actor.policy), '__call__') as policy:
-            _ = self.actor.select_action(self.state)
+            _ = self.actor._select_action(self.state)
             self.assertTrue(policy.called)
 
     def test_policy_net_action_valid_at_end_of_training(self):
-        type(self.actor).epsilon = property(lambda *args: 0)  # mock epsilon to 0
-        action = self.actor.select_action(self.state)
+        type(self.actor)._epsilon = property(lambda *args: 0)  # mock _epsilon to 0
+        action = self.actor._select_action(self.state)
         self.assert_valid_action(action)
 
 

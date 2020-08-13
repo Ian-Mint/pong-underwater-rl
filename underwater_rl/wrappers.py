@@ -4,7 +4,7 @@ https://github.com/openai/baselines/blob/master/baselines/common/atari_wrappers.
 """
 from collections import deque
 
-import cv2
+import cv2  # todo: add try block explaining that libgl1-mesa-glx has to be installed
 import gym
 import numpy as np
 

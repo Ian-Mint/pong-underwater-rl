@@ -39,7 +39,7 @@ class EpisodicMemory(object):
 
     def store(self, episode: int, *args) -> None:
         """
-        Stores completed episodes for sampling using `sample`
+        Stores completed episodes for sampling using `_sample`
 
         :param episode: current episode number
         :param args: ('state', 'action', 'next_state', 'reward')
