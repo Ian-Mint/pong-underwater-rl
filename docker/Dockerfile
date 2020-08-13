@@ -3,7 +3,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=America/Los_Angeles
 RUN apt-get update
 RUN apt-get upgrade -y
-RUN apt-get install -y libsm6 libxext6 libxrender-dev libgl1-mesa-glx vim git wget sudo psmisc locales cmake htop pylint
+RUN apt-get install -y libsm6 libxext6 libxrender-dev libgl1-mesa-glx vim git wget sudo psmisc locales cmake htop pylint less tmux
 RUN locale-gen en_US.UTF-8
 ADD environment.yml /tmp/environment.yml
 RUN conda env create --file /tmp/environment.yml
