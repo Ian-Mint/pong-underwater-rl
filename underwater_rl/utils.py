@@ -33,7 +33,7 @@ def get_logger(store_dir) -> Tuple[logging.Logger, mp.Queue]:
         'formatters': {
             'detailed': {
                 'class': 'logging.Formatter',
-                'format': '%(asctime)s %(levelname)-7s | %(processName)-16s: %(process)-5d | %(threadName)-14s | %(message)s'
+                'format': '%(asctime)s %(levelname)-7s | %(processName)-16s: %(process)-4d | %(threadName)-14s: %(thread)-4d | %(message)s'
             },
             'basic': {
                 'class': 'logging.Formatter',
