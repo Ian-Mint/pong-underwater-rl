@@ -1301,9 +1301,9 @@ def get_communication_objects(n_pipes: int) -> Tuple[mp.Queue, mp.Queue, mp.Queu
     :param n_pipes: Number of ParamPipes. Should equal the number of actors.
     :return: (memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes)
     """
-    memory_queue = mp.Queue(maxsize=1000)
-    replay_in_queue = mp.Queue(maxsize=1000)
-    replay_out_queue = mp.Queue(maxsize=1000)
+    memory_queue = mp.Queue(maxsize=1_000)
+    replay_in_queue = mp.Queue(maxsize=5_000)
+    replay_out_queue = mp.Queue(maxsize=1_000)  # oscillates between full and empty, but keeps sample queue full
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
