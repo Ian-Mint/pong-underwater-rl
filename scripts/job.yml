@@ -5,6 +5,23 @@ metadata:
 spec:
   template:
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                - key: gpu-type
+                  operator: In
+                  values:
+                  - "1080Ti"
+                  - "1080"
+                  - "2080Ti"
+                  - "2080"
+                  - "titan-xp"
+                  - "TITANRTX"
+                  - "M4000"
+                  - "RTX8000"
+                  - "V100"
       containers:
       - name: gpu-container
         image: gitlab-registry.nautilus.optiputer.net/ian/torch:latest
