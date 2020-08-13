@@ -960,6 +960,8 @@ class Replay(Worker):
         self.replay_out_queue = replay_out_queue
         self.log_queue = log_queue
         self.mode = mode
+
+        self.buffer_in = []
         self.memory = deque(maxlen=params['memory_size'])
 
         self.logger = None
@@ -1011,23 +1013,36 @@ class Replay(Worker):
             sample = self.replay_in_queue.get()
             if self.replay_in_queue.empty():
                 self.logger.debug(f'replay_in_queue EMPTY')
-            with self.lock:
-                self.memory.append(sample)
+
+            self.buffer_in.append(sample)
+            if len(self.buffer_in) >= self.initial_memory // 100:
+                with self.lock:
+                    self.memory.extend(self.buffer_in)
+                self.buffer_in = []
 
     def _sample_worker(self) -> None:
         r"""
         Generates samples from memory of length `batch_size` and pushes to `replay_out_queue`
         """
         self.logger.debug("Replay memory _sample worker started")
+        self._wait_for_full_memory()
+
+        while True:
+            with self.lock:
+                batch = random.sample(self.memory, self.batch_size)
+            self.replay_out_queue.put(batch)
+            if self.replay_out_queue.full():
+                self.logger.debug(f'replay_out_queue FULL')
+
+    def _wait_for_full_memory(self) -> None:
+        """
+        Blocks until the memory length surpasses `initial_memory`
+        """
         while True:
             with self.lock:
                 memory_length = len(self.memory)
             if memory_length >= self.initial_memory:
-                with self.lock:
-                    batch = random.sample(self.memory, self.batch_size)
-                self.replay_out_queue.put(batch)
-                if self.replay_out_queue.full():
-                    self.logger.debug(f'replay_out_queue FULL')
+                break
             else:
                 time.sleep(1)
                 self.logger.debug(f'memory length: {memory_length}')
@@ -1308,8 +1323,8 @@ def get_communication_objects(n_pipes: int) -> Tuple[mp.Queue, mp.Queue, mp.Queu
     :return: (memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes)
     """
     memory_queue = mp.Queue(maxsize=1_000)
-    replay_in_queue = mp.Queue(maxsize=5_000)
-    replay_out_queue = mp.Queue(maxsize=5_000)
+    replay_in_queue = mp.Queue(maxsize=1_000)
+    replay_out_queue = mp.Queue(maxsize=100)
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
