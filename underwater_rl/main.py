@@ -1046,7 +1046,7 @@ class Replay(Worker):
 
         while True:
             with self.lock:
-                batch = random.sample(self.memory, self.batch_size)
+                batch = random.choices(self.memory, k=self.batch_size)
             self.replay_out_queue.put(batch)
             if self.replay_out_queue.full():
                 self.logger.debug(f'replay_out_queue FULL')
