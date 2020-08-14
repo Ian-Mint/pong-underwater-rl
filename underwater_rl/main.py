@@ -1036,6 +1036,7 @@ class Replay(Worker):
                 with self.lock:
                     self.memory.extend(self.buffer_in)
                 self.buffer_in = []
+            time.sleep(0.001)
 
     def _sample_worker(self) -> None:
         r"""
