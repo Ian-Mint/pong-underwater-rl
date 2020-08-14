@@ -243,7 +243,7 @@ def main_training_loop(n_episodes, render_mode=False):
         train_pong.initial(args.store_dir, logger=logger)
     for episode in range(1, n_episodes + 1):
         train_episode(episode, render_mode, save_dir)
-        if args.train_prediction and args.pred-episode < episode <= args.pred-episode+1000:
+        if args.train_prediction and args.pred_episode < episode <= args.pred_episode+1000:
             if episode%20 == 1:
                 logger.info(f'Start training prediction on {device} in episode {episode}~{episode+19}')
             train_prediction()
