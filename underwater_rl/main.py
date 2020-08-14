@@ -702,16 +702,24 @@ class Actor(Worker):
         r"""
         Start worker processes and threads
         """
-        # See `Learner.start` for explanation about why `encoder_proc` is not made an attribute.
+        self.main_proc.start()
+
+    def _encoder_start(self) -> mp.Process:
+        """
+        Creates and starts the encoder process
+
+        :return: encoder process handle
+        """
         encoder_proc = mp.Process(target=self._encoder_worker, name=f"Encoder-{self.id}",
                                   kwargs=dict(compress=False), daemon=True)
         encoder_proc.start()
-        self.main_proc.start()
+        return encoder_proc
 
     def _main(self):
         r"""
         Main worker process
         """
+        encoder_proc = self._encoder_start()
         self._set_num_threads(1)
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.info(f"Actor-{self.id} started on device {self.device}")
@@ -720,8 +728,10 @@ class Actor(Worker):
             self._run_episode()
             self.logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
             self._log_episode()
+        self.memory_queue.put(None)  # signal encoder queue to terminate
         self.env.close()
         self._finish_rendering()
+        encoder_proc.join()
         self.logger.info(f"Actor-{self.id} done")
 
     def _set_num_threads(self, n_threads: int) -> None:
@@ -840,6 +850,7 @@ class Actor(Worker):
             shutil.rmtree(self.image_dir)
 
     def _encoder_worker(self, compress=False):
+        # todo: separate out an Encoder class. There is no overlap between learner and encoder methods
         r"""
         Encoder worker to be run alongside Actors
 
@@ -848,7 +859,13 @@ class Actor(Worker):
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.debug("Memory encoder process started")
         while True:
-            actor_id, step_number, state, action, next_state, reward = self.memory_queue.get()
+            transition = self.memory_queue.get()
+            if transition is None:
+                break
+            else:
+                actor_id, step_number, state, action, next_state, reward = transition
+                del transition
+
             if self.memory_queue.empty():
                 self.logger.debug(f'memory_queue EMPTY')
             assert isinstance(state, torch.Tensor), self.logger.error(f"state must be a Tensor, not {type(state)}")
