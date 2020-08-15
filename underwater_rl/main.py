@@ -60,6 +60,7 @@ except ImportError:
 
 # Constants
 MEMORY_BATCH_SIZE = 100
+MAX_STEPS_PER_EPISODE = 50_000
 N_ACTIONS = 3
 ACTOR_UPDATE_INTERVAL = 1000
 LOG_INTERVAL = 20  # number of episodes between logging
@@ -766,7 +767,7 @@ class Actor(Worker):
             total_reward += reward
             if self.total_steps % ACTOR_UPDATE_INTERVAL == 0:
                 self._update_params()
-            if done:
+            if done or steps > MAX_STEPS_PER_EPISODE:
                 break
         # noinspection PyUnboundLocalVariable
         self.history.append(HistoryElement(steps, total_reward))
