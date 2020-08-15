@@ -11,5 +11,5 @@ episodes: 4000
 #resume: False
 #checkpoint: dqn_pong_model
 #history: history.p
-network: dqn_pong_model
+network: dqn
 #pretrain: False

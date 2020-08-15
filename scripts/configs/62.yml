@@ -15,7 +15,7 @@ episodes: 4000
 #resume:  # comment out to turn off
 #checkpoint: dqn_pong_model
 #history: history.p
-network: dqn_pong_model
+network: dqn
 #pretrain:  # comment out to turn off
 state: "binary"
 replay: 10000

@@ -11,5 +11,5 @@ episodes: 4000
 resume:
 checkpoint: ../experiments/18/dqn_pong_model
 history: ../experiments/18/history.p
-network: dqn_pong_model
+network: dqn
 #pretrain: False

@@ -18,8 +18,9 @@ update_prob: 0.4
 # Model and training options
 episodes: 4000
 learning_rate: 1e-4
-network: dqn_pong_model
-replay: 10000
+network: dqn
+replay: 100000
+actors: 10
 #rankbased: # comment out to turn off
 #priority: # comment out to turn off
 #pretrain:  # comment out to turn off
