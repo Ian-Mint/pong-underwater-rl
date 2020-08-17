@@ -17,6 +17,7 @@ Learner                                                                         
 """
 import abc
 import argparse
+import ctypes
 import io
 import logging
 import math
@@ -26,10 +27,11 @@ import shutil
 import sys
 import threading
 import time
-from collections import namedtuple, deque, OrderedDict
+from collections import namedtuple, OrderedDict
 from copy import deepcopy
 from itertools import count
 from logging.handlers import QueueHandler
+from multiprocessing.shared_memory import SharedMemory
 from typing import Union, List, Dict, Tuple, Callable, Iterable
 
 import gym
@@ -69,8 +71,82 @@ CHECKPOINT_INTERVAL = 1000  # number of batches between storing a checkpoint
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 
 # Utility classes
-Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward'))
+Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward', 'done'))
 HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
+
+
+class Memory:
+    """
+    A shared memory utility class
+    """
+
+    def __init__(self):
+        n_bytes = 28224  # 84x84 numpy float64 array size
+
+        self.array_dtype = 'uint8'
+        self.array_shape = (4, 84, 84)
+
+        self.actor_id = mp.Value(ctypes.c_int, 0, lock=False)
+        self.step_number = mp.Value(ctypes.c_int, 0, lock=False)
+        self.state = SharedMemory(create=True, size=n_bytes)
+        self.action = mp.Value(ctypes.c_int, 0, lock=False)
+        self.next_state = SharedMemory(create=True, size=n_bytes)
+        self.reward = mp.Value(ctypes.c_int, 0, lock=False)
+        self.done = mp.Value(ctypes.c_bool, 0, lock=False)
+        self.lock = mp.Lock()
+
+    def update(self, transition: Transition):
+        """
+        Store `transition` in shared memory
+
+        :param transition: a `Transition`
+        """
+        with self.lock:
+            self.actor_id.value = transition.actor_id
+            self.step_number.value = transition.step_number
+            self._copy_array_into_buffer(transition.state, self.state.buf)
+            self.action.value = transition.action
+            if not transition.done:
+                self._copy_array_into_buffer(transition.next_state, self.next_state.buf)
+            self.done.value = transition.done
+
+    def get_values(self):
+        """
+        Get a clean transition from the shared memory objects
+
+        :return: Transition
+        """
+        with self.lock:
+            state = self._get_array_from_buffer(self.state.buf)
+            done = self.done.value
+            if done:
+                next_state = None
+            else:
+                next_state = self._get_array_from_buffer(self.next_state.buf)
+            return Transition(self.actor_id.value, self.step_number.value, state, self.action.value, next_state,
+                              self.reward.value, done)
+
+    def _get_array_from_buffer(self, buffer: memoryview) -> np.ndarray:
+        """
+        Copy array from shared memory
+
+        :param buffer: `SharedMemory` buffer
+        :return: a numpy array
+        """
+        array = np.ndarray(self.array_shape, dtype=self.array_dtype, buffer=buffer)
+        return array.copy()
+
+    def _copy_array_into_buffer(self, array: np.ndarray, buffer: memoryview) -> None:
+        """
+        Copy array into shared memory
+
+        :param array: numpy array
+        :param buffer: `SharedMemory` buffer
+        """
+        assert array.shape == self.array_shape, f"shape {array.shape} != {self.array_shape}"
+        assert array.dtype == self.array_dtype, f"dtype {array.dtype} != {self.array_dtype}"
+        s = np.ndarray(array.shape, dtype=array.dtype, buffer=buffer)
+        s[:] = array[:]
 
 
 class ProcessedBatch:
@@ -448,7 +524,6 @@ class Learner(Worker):
         """
         Save the current state dictionary of `Learner.policy` at `Learner.checkpoint_path`
         """
-        # todo: set this up so that it can be called from the main process
         torch.save(
             {'policy_state': self.policy.state_dict(),
              'optimizer_state': self.optimizer.state_dict(),
@@ -464,6 +539,8 @@ class Learner(Worker):
         :param compress: If true, compress frames as PNG images. Saves ~50% memory, but will require multiple workers to
                          feed the learner quickly enough.
         """
+        transition: Transition
+
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.debug("Memory decoder process started")
 
@@ -473,16 +550,21 @@ class Learner(Worker):
                 self.logger.debug(f'replay_out_queue EMPTY')
 
             decoded_batch = []
+            # todo: compress states in a subclass
             if compress:
                 for transition in batch:
-                    actor_id, step_number, png_state, action, png_next_state, reward = transition
+                    actor_id, step_number, png_state, action, png_next_state, reward, done = transition
                     next_state, state = self._decompress_states(png_next_state, png_state)
-                    decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
+                    decoded_batch.append(
+                        Transition(actor_id, step_number, state, action, next_state, reward, done)
+                    )
             else:
                 for transition in batch:
-                    actor_id, step_number, state, action, next_state, reward = transition
+                    actor_id, step_number, state, action, next_state, reward, done = transition
                     next_state, state = self.states_to_tensor(next_state, state)
-                    decoded_batch.append(Transition(actor_id, step_number, state, action, next_state, reward))
+                    decoded_batch.append(
+                        Transition(actor_id, step_number, state, action, next_state, reward, done)
+                    )
 
             batch, actions, rewards = self._process_transitions(decoded_batch)
             non_final_mask, non_final_next_states = self._mask_non_final(batch)
@@ -767,7 +849,7 @@ class Actor(Worker):
             total_reward += reward
             if self.total_steps % ACTOR_UPDATE_INTERVAL == 0:
                 self._update_params()
-            if done or steps > MAX_STEPS_PER_EPISODE:
+            if done or steps >= MAX_STEPS_PER_EPISODE:
                 break
         # noinspection PyUnboundLocalVariable
         self.history.append(HistoryElement(steps, total_reward))
@@ -792,7 +874,7 @@ class Actor(Worker):
             next_state = State(None)
         if not self.test_mode:
             self.memory_queue.put(
-                Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward)
+                Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward, done)
             )
             if self.memory_queue.full():
                 self.logger.debug(f'memory_queue FULL')
@@ -857,6 +939,8 @@ class Actor(Worker):
 
         :param compress: if True, compress states as PNG images
         """
+        transition: Transition
+
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.debug("Memory encoder process started")
         while True:
@@ -864,7 +948,7 @@ class Actor(Worker):
             if transition is None:
                 break
             else:
-                actor_id, step_number, state, action, next_state, reward = transition
+                actor_id, step_number, state, action, next_state, reward, done = transition
                 del transition
 
             if self.memory_queue.empty():
@@ -879,11 +963,16 @@ class Actor(Worker):
             if next_state is not None:
                 next_state = next_state.squeeze().numpy()
 
+            # todo: put compression in a subclass
             if compress:
                 png_next_state, png_state = self._compress_states(next_state, state)
-                self.replay_in_queue.put(Transition(actor_id, step_number, png_state, action, png_next_state, reward))
+                self.replay_in_queue.put(
+                    Transition(actor_id, step_number, png_state, action, png_next_state, reward, done)
+                )
             else:
-                self.replay_in_queue.put(Transition(actor_id, step_number, state, action, next_state, reward))
+                self.replay_in_queue.put(
+                    Transition(actor_id, step_number, state, action, next_state, reward, done)
+                )
             if self.replay_in_queue.full():
                 self.logger.debug(f'replay_in_queue FULL')
 
@@ -951,7 +1040,7 @@ class Replay(Worker):
                      +-------------+
                      /            \
                     /              \
-    threads     _push_worker   _sample_worker
+    subprocess  _push_worker   _sample_worker
     """
 
     def __init__(self, replay_in_queue, replay_out_queue, log_queue, params: Dict[str, Union[int, float]],
@@ -980,12 +1069,14 @@ class Replay(Worker):
         self.mode = mode
 
         self.buffer_in = []
-        self.memory = deque(maxlen=params['memory_size'])
+        self.memory_maxlen = params['memory_size']
+        self.memory = tuple(Memory() for _ in range(self.memory_maxlen))
+        self.memory_length = mp.Value('i', 0)
+        self.sample_count = 0
 
         self.logger = None
-        self.push_thread = None  # can't pass Thread objects to a new process using spawn or forkserver
-        self.lock = None
-        self.proc = mp.Process(target=self._main, name="Replay")
+        self.memory_full_event = mp.Event()
+        self._main_proc = mp.Process(target=self._main, name="Replay")
 
     def __del__(self):
         self._terminate()
@@ -1000,14 +1091,16 @@ class Replay(Worker):
         r"""
         Main thread
         """
-        self.proc.terminate()
-        self.proc.join()
+        self._main_proc.terminate()
+        self._main_proc.join()
 
     def start(self):
         r"""
         Main thread
         """
-        self.proc.start()
+        push_proc = mp.Process(target=self._push_worker, daemon=True, name="Push")
+        push_proc.start()
+        self._main_proc.start()
 
     def _main(self):
         r"""
@@ -1016,17 +1109,15 @@ class Replay(Worker):
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.debug("Replay process started")
 
-        self.lock = threading.Lock()
-
-        self.push_thread = threading.Thread(target=self._push_worker, daemon=True, name="Push")
-        self.push_thread.start()
-        self._sample_worker()  # run _sample worker in the main thread
+        self._sample_worker()  # run _sample worker in the main process
 
     def _push_worker(self) -> None:
         r"""
         Pushes from replay_in_queue to `memory`
         """
+        self.logger = get_logger_from_process(self.log_queue)
         self.logger.debug("Replay memory push worker started")
+
         while True:
             sample = self.replay_in_queue.get()
             if self.replay_in_queue.empty():
@@ -1034,8 +1125,13 @@ class Replay(Worker):
 
             self.buffer_in.append(sample)
             if len(self.buffer_in) >= self.initial_memory // 100:
-                with self.lock:
-                    self.memory.extend(self.buffer_in)
+                for transition in self.buffer_in:
+                    memory = self.memory[self.sample_count % self.memory_maxlen]
+                    memory.update(transition)
+
+                    self.sample_count += 1
+                    if not self.memory_full_event.is_set() and self.sample_count >= self.initial_memory:
+                        self.memory_full_event.set()
                 self.buffer_in = []
 
     def _sample_worker(self) -> None:
@@ -1046,8 +1142,9 @@ class Replay(Worker):
         self._wait_for_full_memory()
 
         while True:
-            with self.lock:
-                batch = random.choices(self.memory, k=self.batch_size)
+            samples = random.choices(self.memory, k=self.batch_size)
+
+            batch = [s.get_values() for s in samples]
             self.replay_out_queue.put(batch)
             if self.replay_out_queue.full():
                 self.logger.debug(f'replay_out_queue FULL')
@@ -1056,14 +1153,8 @@ class Replay(Worker):
         """
         Blocks until the memory length surpasses `initial_memory`
         """
-        while True:
-            with self.lock:
-                memory_length = len(self.memory)
-            if memory_length >= self.initial_memory:
-                break
-            else:
-                time.sleep(1)
-                self.logger.debug(f'memory length: {memory_length}')
+        while not self.memory_full_event.is_set():
+            time.sleep(1)
 
 
 def display_state(state: torch.Tensor) -> None:
