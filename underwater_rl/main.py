@@ -64,7 +64,7 @@ MAX_STEPS_PER_EPISODE = 50_000
 N_ACTIONS = 3
 ACTOR_UPDATE_INTERVAL = 1000
 LOG_INTERVAL = 20  # number of episodes between logging
-CHECKPOINT_INTERVAL = 100  # number of epochs between storing a checkpoint
+CHECKPOINT_INTERVAL = 1000  # number of batches between storing a checkpoint
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 
@@ -282,7 +282,6 @@ class Learner(Worker):
             self.device = 'cpu'
 
     def __del__(self):
-        self.save_checkpoint()
         self._terminate()
 
     def _terminate(self) -> None:
@@ -306,6 +305,7 @@ class Learner(Worker):
                                       daemon=True)
             decoder_proc.start()
         self.main_proc.start()
+        del self.policy, self.target  # These have already been copied into the child process
 
     def _main(self) -> None:
         """
@@ -334,7 +334,7 @@ class Learner(Worker):
             self._optimize_model()
             self._update_target_net()
             if self.epoch % CHECKPOINT_INTERVAL:
-                self.save_checkpoint()
+                self._save_checkpoint()
 
     def _copy_params(self) -> None:
         """
@@ -444,7 +444,7 @@ class Learner(Worker):
         """
         self.target.load_state_dict(self.policy.state_dict())
 
-    def save_checkpoint(self) -> None:
+    def _save_checkpoint(self) -> None:
         """
         Save the current state dictionary of `Learner.policy` at `Learner.checkpoint_path`
         """
