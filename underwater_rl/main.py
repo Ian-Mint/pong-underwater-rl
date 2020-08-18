@@ -809,22 +809,13 @@ class Actor(Worker):
         """
         self.main_proc.start()
 
-    def _encoder_start(self) -> mp.Process:
-        """
-        Creates and starts the encoder process
-
-        :return: encoder process handle
-        """
-        encoder_proc = mp.Process(target=self._encoder_worker, name=f"Encoder-{self.id}",
-                                  kwargs=dict(compress=False), daemon=True)
-        encoder_proc.start()
-        return encoder_proc
-
     def _main(self):
         r"""
         Main worker process
         """
-        encoder_proc = self._encoder_start()
+        encoder = Encoder(self.log_queue, self.replay_in_queue, self.memory_queue, self.id, daemon=True)
+        encoder.start()
+
         self._set_num_threads(1)
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.info(f"Actor-{self.id} started on device {self.device}")
@@ -836,7 +827,7 @@ class Actor(Worker):
         self.memory_queue.put(None)  # signal encoder queue to terminate
         self.env.close()
         self._finish_rendering()
-        encoder_proc.join()
+        encoder.join()
         self.logger.info(f"Actor-{self.id} done")
 
     def _set_num_threads(self, n_threads: int) -> None:
@@ -954,12 +945,37 @@ class Actor(Worker):
             convert_images_to_video(image_dir=self.image_dir, save_dir=os.path.dirname(self.image_dir))
             shutil.rmtree(self.image_dir)
 
-    def _encoder_worker(self, compress=False):
-        # todo: separate out an Encoder class. There is no overlap between learner and encoder methods
+
+class Encoder(Worker):
+    def __init__(self, log_queue: mp.Queue, replay_in_queue: mp.Queue, memory_queue: mp.Queue, num: int, daemon=True):
+        self.log_queue = log_queue
+        self.replay_in_queue = replay_in_queue
+        self.memory_queue = memory_queue
+
+        self.proc = mp.Process(target=self._main, name=f"Encoder-{num}", daemon=daemon)
+
+    def __del__(self):
+        self._terminate()
+
+    def _parse_options(self, **kwargs):
+        pass
+
+    def _set_device(self):
+        pass
+
+    def _terminate(self):
+        self.proc.terminate()
+        self.proc.join()
+
+    def start(self):
+        self.proc.start()
+
+    def join(self):
+        self.proc.join()
+
+    def _main(self):
         r"""
         Encoder worker to be run alongside Actors
-
-        :param compress: if True, compress states as PNG images
         """
         transition: Transition
 
@@ -985,18 +1001,27 @@ class Actor(Worker):
             if next_state is not None:
                 next_state = next_state.squeeze().numpy()
 
-            # todo: put compression in a subclass
-            if compress:
-                png_next_state, png_state = self._compress_states(next_state, state)
-                self.replay_in_queue.put(
-                    Transition(actor_id, step_number, png_state, action, png_next_state, reward, done)
-                )
-            else:
-                self.replay_in_queue.put(
-                    Transition(actor_id, step_number, state, action, next_state, reward, done)
-                )
+            self.replay_in_queue.put(
+                self._get_transition(action, actor_id, done, next_state, reward, state, step_number)
+            )
+
             if self.replay_in_queue.full():
                 self.logger.debug(f'replay_in_queue FULL')
+
+    def _get_transition(self, action, actor_id, done, next_state, reward, state, step_number) -> Transition:
+        """
+        Return a transition object. Override in a subclass to do work on any of the parameters before storage.
+        """
+        return Transition(actor_id, step_number, state, action, next_state, reward, done)
+
+
+class EncoderCompress(Encoder):
+    def _get_transition(self, action, actor_id, done, next_state, reward, state, step_number) -> Transition:
+        """
+        Compress states as PNG images before storage.
+        """
+        png_next_state, png_state = self._compress_states(next_state, state)
+        return Transition(actor_id, step_number, png_state, action, png_next_state, reward, done)
 
     def _compress_states(self, next_state: np.ndarray, state: np.ndarray) -> Tuple[Union[io.BytesIO, None], io.BytesIO]:
         r"""
