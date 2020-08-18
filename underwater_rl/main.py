@@ -375,11 +375,9 @@ class Learner(Worker):
         # by context to another process. In this case, only one of the processes can be stored in `self`, and the other
         # process must be started before the `self` process.
         for i in range(self.n_decoder_processes):
-            decoder_proc = mp.Process(target=self._decoder_worker,
-                                      name=f"MemoryDecoder-{i}",
-                                      kwargs=dict(compress=False),
-                                      daemon=True)
-            decoder_proc.start()
+            decoder = Decoder(self.log_queue, self.replay_out_queue, self.sample_queue, i, daemon=True)
+            decoder.start()
+
         self.main_proc.start()
         del self.policy, self.target  # These have already been copied into the child process
 
@@ -531,7 +529,32 @@ class Learner(Worker):
              'epoch': self.epoch},
             os.path.join(self.checkpoint_path))
 
-    def _decoder_worker(self, compress: bool = False) -> None:
+
+class Decoder(Worker):
+    def __init__(self, log_queue: mp.Queue, replay_out_queue: mp.Queue, sample_queue: mp.Queue, num: int, daemon=True):
+        self.log_queue = log_queue
+        self.replay_out_queue = replay_out_queue
+        self.sample_queue = sample_queue
+
+        self.proc = mp.Process(target=self._main, name=f"MemoryDecoder-{num}", daemon=daemon)
+
+    def start(self):
+        self.proc.start()
+
+    def _parse_options(self, **kwargs):
+        pass
+
+    def _set_device(self):
+        pass
+
+    def _terminate(self):
+        self.proc.terminate()
+        self.proc.join()
+
+    def __del__(self):
+        self._terminate()
+
+    def _main(self, compress: bool = False) -> None:
         """
         Decoder worker to be run alongside Learner. To save GPU memory, we leave it to the Learner to push tensors to
         GPU.
@@ -550,21 +573,8 @@ class Learner(Worker):
                 self.logger.debug(f'replay_out_queue EMPTY')
 
             decoded_batch = []
-            # todo: compress states in a subclass
-            if compress:
-                for transition in batch:
-                    actor_id, step_number, png_state, action, png_next_state, reward, done = transition
-                    next_state, state = self._decompress_states(png_next_state, png_state)
-                    decoded_batch.append(
-                        Transition(actor_id, step_number, state, action, next_state, reward, done)
-                    )
-            else:
-                for transition in batch:
-                    actor_id, step_number, state, action, next_state, reward, done = transition
-                    next_state, state = self.states_to_tensor(next_state, state)
-                    decoded_batch.append(
-                        Transition(actor_id, step_number, state, action, next_state, reward, done)
-                    )
+            for transition in batch:
+                decoded_batch.append(self._decode_transition(transition))
 
             batch, actions, rewards = self._process_transitions(decoded_batch)
             non_final_mask, non_final_next_states = self._mask_non_final(batch)
@@ -577,28 +587,10 @@ class Learner(Worker):
             if self.sample_queue.full():
                 self.logger.debug(f'sample_queue FULL')
 
-    def _decompress_states(self,
-                           png_next_state: Union[List[Union[io.BytesIO, None]], Union[io.BytesIO, None]],
-                           png_state: io.BytesIO) -> Tuple[torch.Tensor, torch.Tensor]:
-        r"""
-        Convert png image states stored as a `BytesIO` file to a `torch.Tensor`. On png_next_state, performs checking in
-        case the state is `None`.
-
-        :param png_next_state: png image stored in `BytesIO` or `None`
-        :param png_state: png image stored in `BytesIO`
-        :return: `(next_state, state)`
-        """
-        transform = transforms.ToTensor()
-        next_state = None
-        if isinstance(png_state, list):
-            state = self._decode_stacked_frames(png_state)
-            if png_next_state is not None:
-                next_state = self._decode_stacked_frames(png_next_state)
-        else:
-            state = transform(Image.open(png_state)).to('cpu')
-            if png_next_state is not None:
-                next_state = transform(Image.open(png_next_state)).to('cpu')
-        return next_state, state
+    def _decode_transition(self, transition: Transition) -> Transition:
+        actor_id, step_number, state, action, next_state, reward, done = transition
+        next_state, state = self.states_to_tensor(next_state, state)
+        return Transition(actor_id, step_number, state, action, next_state, reward, done)
 
     def states_to_tensor(self, next_state: Union[np.ndarray, None], state: np.ndarray) \
             -> Tuple[Union[torch.Tensor, None], torch.Tensor]:
@@ -666,6 +658,36 @@ class Learner(Worker):
         actions = tuple((map(lambda a: torch.tensor([[a]], device='cpu'), batch.action)))
         rewards = tuple((map(lambda r: torch.tensor([r], device='cpu'), batch.reward)))
         return batch, actions, rewards
+
+
+class DecoderCompress(Decoder):
+    def _decode_transition(self, transition: Transition) -> Transition:
+        actor_id, step_number, png_state, action, png_next_state, reward, done = transition
+        next_state, state = self._decompress_states(png_next_state, png_state)
+        return Transition(actor_id, step_number, state, action, next_state, reward, done)
+
+    def _decompress_states(self,
+                           png_next_state: Union[List[Union[io.BytesIO, None]], Union[io.BytesIO, None]],
+                           png_state: io.BytesIO) -> Tuple[torch.Tensor, torch.Tensor]:
+        r"""
+        Convert png image states stored as a `BytesIO` file to a `torch.Tensor`. On png_next_state, performs checking in
+        case the state is `None`.
+
+        :param png_next_state: png image stored in `BytesIO` or `None`
+        :param png_state: png image stored in `BytesIO`
+        :return: `(next_state, state)`
+        """
+        transform = transforms.ToTensor()
+        next_state = None
+        if isinstance(png_state, list):
+            state = self._decode_stacked_frames(png_state)
+            if png_next_state is not None:
+                next_state = self._decode_stacked_frames(png_next_state)
+        else:
+            state = transform(Image.open(png_state)).to('cpu')
+            if png_next_state is not None:
+                next_state = transform(Image.open(png_next_state)).to('cpu')
+        return next_state, state
 
     @staticmethod
     def _decode_stacked_frames(png_state: List[io.BytesIO]) -> torch.Tensor:
