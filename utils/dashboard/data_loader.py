@@ -26,11 +26,43 @@ def load_history(experiment_dir: str) -> List[Tuple[float, int]]:
     """
     assert os.path.exists(experiment_dir), f"{experiment_dir} does not exist"
 
-    file = os.path.join(experiment_dir, 'history.p')
-    if os.path.exists(file):
-        with open(file, 'rb') as f:
-            history = pickle.load(f)
-        return history
+    pickle_file = os.path.join(experiment_dir, 'history.p')
+    log_file = os.path.join(experiment_dir, 'output.log')
+    if os.path.exists(pickle_file):
+        return _load_pickle(pickle_file)
+    else:
+        return _parse_history_from_log(log_file)
+
+
+def _parse_history_from_log(file):
+    actor_pattern = re.compile(r'(?<=--actors )\d+')
+    reward_pattern = re.compile(r'(?<=Reward: )[-\d]\d*')
+    steps_pattern = re.compile(r'(?<=Steps: )\d+')
+    full_pattern = re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO {4}\| '
+                              r'Actor: \d+ *\tTotal steps: \d+ *\tEpisode: \d+ *\tReward: [-\d]\d* *\tSteps: \d+$')
+    history = []
+    batch = []
+    i = 0
+    with open(file, 'r') as f:
+        head = f.readline()
+        n_actors = int(re.findall(actor_pattern, head).pop())
+        for line in f:
+            if re.match(full_pattern, line) is not None:
+                i += 1
+                reward = int(re.findall(reward_pattern, line).pop())
+                steps = int(re.findall(steps_pattern, line).pop())
+                batch.append((reward, steps))
+                if i % n_actors == 0:
+                    reward_batch, step_batch = tuple(zip(*batch))
+                    history.append((sum(reward_batch) / n_actors, sum(step_batch) / n_actors))
+                    batch = []
+    return history
+
+
+def _load_pickle(file):
+    with open(file, 'rb') as f:
+        history = pickle.load(f)
+    return history
 
 
 @cache.memoize()
@@ -184,8 +216,7 @@ def get_multi_index_history_df(experiments: List[str]) -> pd.DataFrame:
         history = load_history(os.path.join(root_dir, 'experiments', e))
         if history is None:
             continue
-        rewards = [v[0] for v in history]
-        steps = [v[1] for v in history]
+        rewards, steps = tuple(zip(*history))
         hist_dict[e] = {'reward': rewards, 'step': steps}
 
     df = pd.DataFrame.from_dict({(i, j): hist_dict[i][j]
