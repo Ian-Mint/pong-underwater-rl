@@ -531,6 +531,9 @@ class Learner(Worker):
 
 
 class Decoder(Worker):
+    """
+    Decoder worker. One or more may be run alongside the learner to process sample batches.
+    """
     def __init__(self, log_queue: mp.Queue, replay_out_queue: mp.Queue, sample_queue: mp.Queue, num: int, daemon=True):
         self.log_queue = log_queue
         self.replay_out_queue = replay_out_queue
@@ -983,23 +986,17 @@ class Encoder(Worker):
         self.logger.debug("Memory encoder process started")
         while True:
             transition = self.memory_queue.get()
-            if transition is None:
+            if transition is None:  # The actor is done
                 break
-            else:
-                actor_id, step_number, state, action, next_state, reward, done = transition
-                del transition
+
+            actor_id, step_number, state, action, next_state, reward, done = transition
+            del transition
 
             if self.memory_queue.empty():
                 self.logger.debug(f'memory_queue EMPTY')
-            assert isinstance(state, torch.Tensor), self.logger.error(f"state must be a Tensor, not {type(state)}")
-            assert isinstance(next_state, (torch.Tensor, type(None))), \
-                self.logger.error(f"next_state must be a Tensor or None, not{type(next_state)}")
-            assert isinstance(action, int), self.logger.error(f"action must be an integer, not {type(action)}")
-            assert isinstance(reward, (int, float)), self.logger.error(f"reward must be a float, not {type(reward)}")
 
-            state = state.squeeze().numpy()
-            if next_state is not None:
-                next_state = next_state.squeeze().numpy()
+            self._check_inputs(action, next_state, reward, state)
+            next_state, state = self._process_states(next_state, state)
 
             self.replay_in_queue.put(
                 self._get_transition(action, actor_id, done, next_state, reward, state, step_number)
@@ -1007,6 +1004,26 @@ class Encoder(Worker):
 
             if self.replay_in_queue.full():
                 self.logger.debug(f'replay_in_queue FULL')
+
+    @staticmethod
+    def _process_states(next_state, state) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Squeeze and convert to numpy
+        """
+        state = state.squeeze().numpy()
+        if next_state is not None:
+            next_state = next_state.squeeze().numpy()
+        return next_state, state
+
+    def _check_inputs(self, action, next_state, reward, state):
+        """
+        Ensure inputs are the expected types
+        """
+        assert isinstance(state, torch.Tensor), self.logger.error(f"state must be a Tensor, not {type(state)}")
+        assert isinstance(next_state, (torch.Tensor, type(None))), \
+            self.logger.error(f"next_state must be a Tensor or None, not{type(next_state)}")
+        assert isinstance(action, int), self.logger.error(f"action must be an integer, not {type(action)}")
+        assert isinstance(reward, (int, float)), self.logger.error(f"reward must be a float, not {type(reward)}")
 
     def _get_transition(self, action, actor_id, done, next_state, reward, state, step_number) -> Transition:
         """
