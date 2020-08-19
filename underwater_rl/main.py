@@ -1170,7 +1170,11 @@ class Replay(Worker):
     subprocess  _push_worker   _sample_worker
     """
 
-    def __init__(self, replay_in_queue, replay_out_queue, log_queue, params: Dict[str, Union[int, float]],
+    def __init__(self,
+                 replay_in_queue: mp.Queue,
+                 replay_out_queue: mp.Queue,
+                 log_queue: mp.Queue,
+                 params: Dict[str, Union[int, float]],
                  mode='default'):
         r"""
         Stores and samples the replay memory.
@@ -1479,12 +1483,12 @@ def main() -> None:
     logger.info(f'Device: {DEVICE}')
 
     if args.test:
-        test(args, logger, log_queue)
+        test(args, logger)
     else:
         train(args, logger, log_queue)
 
 
-def test(args, logger, log_queue):
+def test(args, logger):
     actor_params = {
         'test_mode': True,
         'architecture': args.network,
