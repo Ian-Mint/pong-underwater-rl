@@ -523,17 +523,16 @@ class Learner(Worker):
         Save the current state dictionary of `Learner.policy` at `Learner.checkpoint_path`
         """
         torch.save(
-            {'policy_state': self.policy.state_dict(),
-             'optimizer_state': self.optimizer.state_dict(),
-             'samples_processed': self.epoch * self.batch_size,
-             'epoch': self.epoch},
-            os.path.join(self.checkpoint_path))
+            {'policy_state': self.policy.state_dict()},
+            os.path.join(self.checkpoint_path)
+        )
 
 
 class Decoder(Worker):
     """
     Decoder worker. One or more may be run alongside the learner to process sample batches.
     """
+
     def __init__(self, log_queue: mp.Queue, replay_out_queue: mp.Queue, sample_queue: mp.Queue, num: int, daemon=True):
         self.log_queue = log_queue
         self.replay_out_queue = replay_out_queue
@@ -721,8 +720,8 @@ class Actor(Worker):
                  model: nn.Module,
                  n_episodes: int,
                  render_mode: Union[str, bool],
-                 memory_queue: torch.multiprocessing.Queue,
-                 replay_in_queue: torch.multiprocessing.Queue,
+                 memory_queue: mp.Queue,
+                 replay_in_queue: mp.Queue,
                  pipe: ParamPipe,
                  global_args: argparse.Namespace,
                  log_queue: torch.multiprocessing.Queue,
@@ -823,15 +822,18 @@ class Actor(Worker):
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.info(f"Actor-{self.id} started on device {self.device}")
 
-        for self.episode in range(1, self.n_episodes + 1):
-            self._run_episode()
-            self.logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
-            self._log_episode()
+        self._main_loop()
         self.memory_queue.put(None)  # signal encoder queue to terminate
         self.env.close()
         self._finish_rendering()
         encoder.join()
         self.logger.info(f"Actor-{self.id} done")
+
+    def _main_loop(self):
+        for self.episode in range(1, self.n_episodes + 1):
+            self._run_episode()
+            self.logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
+            self._log_episode()
 
     def _set_num_threads(self, n_threads: int) -> None:
         r"""
@@ -947,6 +949,67 @@ class Actor(Worker):
         if self.render_mode == 'png':
             convert_images_to_video(image_dir=self.image_dir, save_dir=os.path.dirname(self.image_dir))
             shutil.rmtree(self.image_dir)
+
+
+class ActorTest(Actor):
+    """
+    Not a true subclass of Actor. Runs blocking in a single process.
+    """
+
+    # noinspection PyMissingConstructor
+    def __init__(self,
+                 model: nn.Module,
+                 n_episodes: int,
+                 render_mode: Union[str, bool],
+                 global_args: argparse.Namespace,
+                 actor_params: Dict[str, Union[int, float]],
+                 logger: logging.Logger,
+                 image_dir: str = None):
+        r"""
+        Continually steps the environment and pushes experiences to replay memory
+
+        :param n_episodes: Number of episodes over which to train or test
+        :param render_mode: How and whether to visibly render states
+        :param global_args: The namespace returned bye the global argument parser
+        :param logger: Main process logger
+        :param actor_params: dictionary of parameters used to determine actor behavior
+        :param image_dir: required if render_mode is not `False`
+        """
+        self.logger = logger
+        self.env = dispatch_make_env(global_args)
+        self.policy = deepcopy(model)
+        self.render_mode = render_mode
+        self.n_episodes = n_episodes
+        self.image_dir = image_dir
+
+        self.test_mode = global_args.test
+        self._parse_options(**actor_params)
+
+        self._set_device()
+        self.policy = self.policy.to(self.device)
+
+        self.id = self.counter
+        type(self).counter += 1
+
+        self.episode = 0
+        self.total_steps = 0
+        self.history = []
+
+        self.main_proc = mp.Process(target=self._main, name=f"Actor-{self.id}")
+
+    def __del__(self):
+        pass
+
+    def _main(self):
+        raise NotImplementedError
+
+    def _terminate(self):
+        raise NotImplementedError
+
+    def start(self) -> None:
+        self._main_loop()
+        self.env.close()
+        self._finish_rendering()
 
 
 class Encoder(Worker):
@@ -1370,8 +1433,8 @@ def get_parser() -> argparse.ArgumentParser:
     resume_args = parser.add_argument_group("Resume", "Store experiments / Resume training")
     resume_args.add_argument('--resume', dest='resume', action='store_true',
                              help='Resume training switch. (omit to start from scratch)')
-    resume_args.add_argument('--checkpoint', default='model.torch',
-                             help='Checkpoint to load if resuming (default: model.torch)')
+    resume_args.add_argument('--checkpoint', default='dqn.torch',
+                             help='Checkpoint to load if resuming (default: dqn.torch)')
     resume_args.add_argument('--history', default='history.p',
                              help='History to load if resuming (default: history.p)')
     resume_args.add_argument('--store-dir', dest='store_dir',
@@ -1392,6 +1455,17 @@ def create_storage_dir(directory: str) -> None:
         os.makedirs(directory)
 
 
+def load_checkpoint(path: str, model) -> None:
+    """
+    Load policy net and target_net state from file
+    
+    :param path: path to the checkpoint 
+    :param model: policy model object
+    """
+    checkpoint = torch.load(path, map_location='cpu')
+    model.load_state_dict(checkpoint['policy_state'])
+
+
 def main() -> None:
     """
     Code here is called in the main process, but not by subprocesses.
@@ -1400,6 +1474,46 @@ def main() -> None:
     args = parser.parse_args()
     create_storage_dir(args.store_dir)
 
+    logger, log_queue = get_logger(args.store_dir)
+    logger.info(get_args_status_string(parser, args))
+    logger.info(f'Device: {DEVICE}')
+
+    if args.test:
+        test(args, logger, log_queue)
+    else:
+        train(args, logger, log_queue)
+
+
+def test(args, logger, log_queue):
+    actor_params = {
+        'test_mode': True,
+        'architecture': args.network,
+        'steps_decay': args.steps_decay,
+        'eps_decay': args.epsdecay,
+        'eps_end': 0.02,
+        'eps_start': 1,
+    }
+
+    model = initialize_model(args.network)
+    load_checkpoint(args.checkpoint, model)
+
+    actor = ActorTest(model=model,
+                      n_episodes=args.episodes,
+                      render_mode=args.render,
+                      global_args=args,
+                      logger=logger,
+                      actor_params=actor_params)
+
+    actor.start()
+
+    try:
+        actor.join()
+        logger.info("All actors finished")
+    except KeyboardInterrupt:
+        del actor
+
+
+def train(args, logger, log_queue):
     learning_params = {
         'batch_size': args.batch_size,
         'gamma': 0.99,
@@ -1414,7 +1528,7 @@ def main() -> None:
         raise NotImplementedError("steps_decay is not yet implemented")
 
     actor_params = {
-        'test_mode': args.test,
+        'test_mode': False,
         'architecture': args.network,
         'steps_decay': args.steps_decay,
         'eps_decay': args.epsdecay,
@@ -1427,10 +1541,6 @@ def main() -> None:
         'initial_memory': args.replay,  # Wait for the memory buffer to fill before training
         'batch_size': args.batch_size
     }
-
-    logger, log_queue = get_logger(args.store_dir)
-    logger.info(get_args_status_string(parser, args))
-    logger.info(f'Device: {DEVICE}')
 
     # Get shared objects
     model = initialize_model(args.network)
