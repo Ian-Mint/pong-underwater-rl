@@ -1261,7 +1261,7 @@ class Replay(Worker):
 
         self.logger = None
         self.memory_full_event = mp.Event()
-        self._main_proc = mp.Process(target=self._main, name="Replay")
+        self._main_proc = mp.Process(target=self._main, name="ReplaySample")
 
     def __del__(self):
         self._terminate()
@@ -1285,18 +1285,19 @@ class Replay(Worker):
         r"""
         Main thread
         """
-        push_proc = mp.Process(target=self._push_worker, daemon=True, name="Push")
-        push_proc.start()
         self._main_proc.start()
 
     def _main(self):
         r"""
         Launch push thread and run push worker in the main thread.
         """
+        push_proc = mp.Process(target=self._push_worker, daemon=True, name="ReplayPush")
+        push_proc.start()
+
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.debug("Replay process started")
 
-        self._sample_worker()  # run _sample worker in the main process
+        self._sample_worker()
 
     def _push_worker(self) -> None:
         r"""
@@ -1308,6 +1309,8 @@ class Replay(Worker):
         buffer_len = 100
         while True:
             sample = self.replay_in_queue.get()
+            if sample is None:
+                break
             if self.replay_in_queue.empty():
                 self.logger.debug(f'replay_in_queue EMPTY')
 
@@ -1325,7 +1328,7 @@ class Replay(Worker):
         r"""
         Generates samples from memory of length `batch_size` and pushes to `replay_out_queue`
         """
-        self.logger.debug("Replay memory _sample worker started")
+        self.logger.debug("Replay memory sample worker started")
         self._wait_for_full_memory()
 
         while True:
