@@ -422,13 +422,6 @@ class Learner(Worker):
         """
         Start all threads and processes
         """
-        # A started process has a `__weakref__` attribute that is not picklable. So, a started process cannot be passed
-        # by context to another process. In this case, only one of the processes can be stored in `self`, and the other
-        # process must be started before the `self` process.
-        for i in range(self.n_decoder_processes):
-            decoder = Decoder(self.log_queue, self.replay_out_queue, self.sample_queue, i, daemon=True)
-            decoder.start()
-
         self.main_proc.start()
         del self.policy, self.target  # These have already been copied into the child process
 
@@ -436,6 +429,13 @@ class Learner(Worker):
         """
         The main worker process
         """
+        # A started process has a `__weakref__` attribute that is not picklable. So, a started process cannot be passed
+        # by context to another process. In this case, only one of the processes can be stored in `self`, and the other
+        # process must be started before the `self` process.
+        decoders = [Decoder(self.log_queue, self.replay_out_queue, self.sample_queue, i, daemon=True)
+                    for i in range(self.n_decoder_processes)]
+        [d.start() for d in decoders]
+
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.info(f"Learner started on device {self.device}")
 
@@ -450,13 +450,17 @@ class Learner(Worker):
             t.start()
 
         self._optimizer_loop()
+        [d.join() for d in decoders]
 
     def _optimizer_loop(self) -> None:
         """
         Main training loop
         """
         for self.epoch in count(1):
-            self._optimize_model()
+            batch = self._sample()
+            if batch is None:
+                break
+            self._optimize_model(batch)
             self._update_target_net()
             if self.epoch % CHECKPOINT_INTERVAL:
                 self._save_checkpoint()
@@ -494,12 +498,10 @@ class Learner(Worker):
             else:
                 time.sleep(0.01)
 
-    def _optimize_model(self):
+    def _optimize_model(self, batch: ProcessedBatch):
         """
         Run a batch through optimization
         """
-        batch = self._sample()
-
         state_action_values = self._forward_policy(batch.actions, batch.states)
         next_state_values = self._forward_target(batch.non_final_mask, batch.non_final_next_states)
         expected_state_action_values = (next_state_values * self.gamma) + batch.rewards.float()
@@ -594,6 +596,9 @@ class Decoder(Worker):
     def start(self):
         self.proc.start()
 
+    def join(self):
+        self.proc.join(timeout=1)
+
     def _parse_options(self, **kwargs):
         pass
 
@@ -607,23 +612,23 @@ class Decoder(Worker):
     def __del__(self):
         self._terminate()
 
-    def _main(self, compress: bool = False) -> None:
+    def _main(self) -> None:
         """
         Decoder worker to be run alongside Learner. To save GPU memory, we leave it to the Learner to push tensors to
         GPU.
-
-        :param compress: If true, compress frames as PNG images. Saves ~50% memory, but will require multiple workers to
-                         feed the learner quickly enough.
         """
         transition: Transition
 
         self.logger = get_logger_from_process(self.log_queue)
-        self.logger.debug("Memory decoder process started")
+        self.logger.debug("Decoder process started")
 
         while True:
             batch = self.replay_out_queue.get()
             if self.replay_out_queue.empty():
                 self.logger.debug(f'replay_out_queue EMPTY')
+            if batch is None:  # end the process
+                self.sample_queue.put(None)
+                break
 
             decoded_batch = []
             for transition in batch:
