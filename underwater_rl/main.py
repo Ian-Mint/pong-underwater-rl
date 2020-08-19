@@ -1333,7 +1333,6 @@ class Replay(Worker):
 
         while True:
             batch = random.choices(self.memory, k=self.batch_size)
-            self.logger.debug("GOT A BATCH")  # todo: remove this line
             self.replay_out_queue.put(batch)
             if self.replay_out_queue.full():
                 self.logger.debug(f'replay_out_queue FULL')
