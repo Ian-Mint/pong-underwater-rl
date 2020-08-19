@@ -16,9 +16,7 @@ Decoder                                                           +-> sample_que
 Learner                                                                          +-> _sample
 """
 import abc
-import array
 import argparse
-import ctypes
 import io
 import logging
 import math
@@ -94,7 +92,7 @@ class Memory:
         #   1 bool (1-byte)
         self._length = length
         self._shared_memory = SharedMemory(create=True, size=self.stride * length)
-        self._lock = mp.Lock()
+        self._locks = [mp.Lock() for _ in range(length)]
 
     @property
     def _buf(self):
@@ -120,7 +118,7 @@ class Memory:
         if index < 0 or index > self._length:
             raise IndexError(f"index {index} out of bounds")
 
-        with self._lock:
+        with self._locks[index]:
             self._offset = index * self.stride
 
             actor_id = int.from_bytes(self._get(self.int_size), 'big')
@@ -170,7 +168,7 @@ class Memory:
         if index < 0 or index > self._length:
             raise IndexError(f"index {index} out of bounds")
 
-        with self._lock:
+        with self._locks[index]:
             self._offset = index * self.stride
 
             # 'actor_id', 'step_number', 'state', 'action', 'next_state', 'reward', 'done'
@@ -1330,6 +1328,7 @@ class Replay(Worker):
         """
         self.logger.debug("Replay memory sample worker started")
         self._wait_for_full_memory()
+        self.logger.info("Memory full, start sampling")
 
         while True:
             batch = random.choices(self.memory, k=self.batch_size)
