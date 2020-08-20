@@ -16,6 +16,8 @@ import torch.nn as nn
 import torch.optim as optim
 from PIL import Image
 
+import underwater_rl.utils
+
 try:
     import underwater_rl.main as main
     import underwater_rl.main as memory
@@ -127,7 +129,7 @@ class TestMemoryEncoder(unittest.TestCase):
     def set_state(self, shape: tuple):
         x = np.linspace(0, 255, reduce(mul, shape)).reshape(shape).astype(np.uint8)
         self.state = torch.from_numpy(x)
-        self.memory_queue.put(main.Transition(0, 0, self.state, 0, self.state, 0))
+        self.memory_queue.put(underwater_rl.utils.Transition(0, 0, self.state, 0, self.state, 0))
 
     def tearDown(self) -> None:
         self.proc.terminate()

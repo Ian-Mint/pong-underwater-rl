@@ -10,11 +10,18 @@ import os
 import re
 import threading
 import time
+from collections import namedtuple
+from logging.handlers import QueueHandler
 from typing import Tuple
 
 import cv2
 import numpy as np
 import torch
+
+__all__ = ['get_logger', 'models_are_equal', 'convert_images_to_video', 'distr_projection', 'get_args_status_string',
+           'get_logger_from_process', 'Transition', 'HistoryElement']
+
+from torch import multiprocessing as mp
 
 
 def get_logger(store_dir) -> Tuple[logging.Logger, mp.Queue]:
@@ -170,13 +177,21 @@ def get_args_status_string(parser: argparse.ArgumentParser, args: argparse.Names
     return s
 
 
-def tic():
-    return time.time()
+def get_logger_from_process(log_queue: mp.Queue) -> logging.Logger:
+    """
+    To be called from new processes to generate a handle to the root logger.
+
+    :param log_queue: Queue object used to store log messages
+    :return: a Logger
+    """
+    logger = logging.getLogger()
+    logger.addHandler(QueueHandler(log_queue))
+    logger.setLevel(logging.DEBUG)
+    return logger
 
 
-def toc(tstart, nm=""):
-    print('%s took: %s sec.\n' % (nm, (time.time() - tstart)))
-
+Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward', 'done'))
+HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
 
 if __name__ == '__main__':
     # arguments
