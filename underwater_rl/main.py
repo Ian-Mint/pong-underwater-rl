@@ -44,6 +44,8 @@ Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'
 def select_action(state):
     if architecture == 'soft_dqn':
         return select_soft_action(state)
+    elif architecture == 'noisy_dqn':
+        return select_noisy_action(state)
     else:
         return select_e_greedy_action(state)
 
@@ -70,6 +72,11 @@ def get_epsilon(epoch, steps_done):
                         math.exp(-1. * epoch / EPS_DECAY)
     return eps_threshold
 
+
+def select_noisy_action(state):
+    with torch.no_grad():
+        return policy_net(state.to(device)).max(1)[1]
+    
 
 def select_soft_action(state):
     with torch.no_grad():
@@ -507,6 +514,10 @@ def get_models(architecture, n_actions):
         policy_net = DQN(in_channels=8, n_actions=n_actions).to(device)
         target_net = DQN(in_channels=8, n_actions=n_actions).to(device)
         target_net.load_state_dict(policy_net.state_dict())
+    elif architecture == 'noisy_dqn':
+        policy_net = NoisyDQN(n_actions=n_actions).to(device)
+        target_net = NoisyDQN(n_actions=n_actions).to(device)
+        target_net.load_state_dict(policy_net.state_dict())
     else:
         if architecture == 'resnet18':
             policy_net = resnet18(pretrained=pretrain)
@@ -527,6 +538,7 @@ def get_models(architecture, n_actions):
                     dueling_dqn,
                     distribution_dqn,
                     predict_dqn,
+                    noisy_dqn,
                     lstm,
                     Resnet:
                         resnet18,
@@ -618,7 +630,7 @@ def get_parser():
                          help='learning rate (default: 1e-4)')
     rl_args.add_argument('--network', default='dqn_pong_model',
                          choices=['dqn_pong_model', 'soft_dqn', 'dueling_dqn', 'resnet18', 'resnet10', 'resnet12',
-                                  'resnet14', 'lstm', 'distribution_dqn'],
+                                  'resnet14', 'noisy_dqn', 'lstm', 'distribution_dqn'],
                          help='choose a network architecture (default: dqn_pong_model)')
     rl_args.add_argument('--double', default=False, action='store_true',
                          help='switch for double dqn (default: False)')
