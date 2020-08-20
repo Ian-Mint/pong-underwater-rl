@@ -1,6 +1,6 @@
 import unittest
 
-from utils.dashboard.data_loader import get_multi_index_history_df, get_rewards_history_df, get_experiments, \
+from dashboard.data_loader import get_multi_index_history_df, get_rewards_history_df, get_experiments, \
     get_all_grid_search_params
 
 experiments = ['4-t2', '5-t2']

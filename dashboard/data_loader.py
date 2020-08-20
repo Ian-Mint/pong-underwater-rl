@@ -4,16 +4,13 @@ import re
 from typing import List, Tuple, Dict
 
 import pandas as pd
-try:
-    from ..dashboard import cache
-except ImportError:
-    from __init__ import cache
+from dashboard import cache
 
 __all__ = ['get_grid_searches', 'get_experiments', 'get_rewards_history_df', 'get_steps_history_df',
            'get_parameters_df', 'get_grid_search_params', 'get_grid_search_experiments', 'get_all_grid_search_params',
            'get_grid_search_results_value']
 
-root_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+root_dir = os.path.dirname(os.path.dirname(__file__))
 
 
 @cache.memoize()
