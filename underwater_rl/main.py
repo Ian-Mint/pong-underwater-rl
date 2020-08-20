@@ -354,7 +354,7 @@ class Learner(Worker):
                  pipes: List[ParamPipe], checkpoint_path: str,
                  log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]],
-                 n_decoders: int = 6):
+                 n_decoders: int = 10):
         """
         In two separate processes, decodes sampled data and runs training.
 
