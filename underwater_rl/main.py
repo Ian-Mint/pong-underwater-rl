@@ -354,11 +354,11 @@ class Learner(Worker):
                  pipes: List[ParamPipe], checkpoint_path: str,
                  log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]],
-                 n_decoders: int = 5):
+                 n_decoders: int = 2):
         """
         In two separate processes, decodes sampled data and runs training.
 
-        :param n_decoders:
+        :param n_decoders: Number of decoder processes to run
         :param optimizer: The selected type of optimizer
         :param model: The initialized model object to be copied into the learner
         :param replay_out_queue: _sample batches are pulled from this queue for decoding
