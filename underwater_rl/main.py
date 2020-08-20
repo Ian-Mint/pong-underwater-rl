@@ -92,7 +92,13 @@ class Memory:
         #   1 bool (1-byte)
         self._length = length
         self._shared_memory = SharedMemory(create=True, size=self.stride * length)
-        self._locks = [mp.Lock() for _ in range(length)]
+
+        _n_locks = 10_000
+        self._locks = [mp.Lock() for _ in range(_n_locks)]
+        self._lock_length = length // _n_locks
+
+    def __del__(self):
+        self._shared_memory.unlink()
 
     @property
     def _buf(self):
@@ -114,11 +120,12 @@ class Memory:
             raise IndexError
         return [self._get_item(i % self._length) for i in range(slice_.start, slice_.stop, slice_.step)]
 
+    # todo: use __get_slice__ and __set_slice__
     def _get_item(self, index):
         if index < 0 or index > self._length:
             raise IndexError(f"index {index} out of bounds")
 
-        with self._locks[index]:
+        with self._locks[index // self._lock_length]:
             self._offset = index * self.stride
 
             actor_id = int.from_bytes(self._get(self.int_size), 'big')
@@ -168,7 +175,7 @@ class Memory:
         if index < 0 or index > self._length:
             raise IndexError(f"index {index} out of bounds")
 
-        with self._locks[index]:
+        with self._locks[index // self._lock_length]:
             self._offset = index * self.stride
 
             # 'actor_id', 'step_number', 'state', 'action', 'next_state', 'reward', 'done'

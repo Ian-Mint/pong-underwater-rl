@@ -5,3 +5,8 @@ dqn_pong_model
 cache/
 *.ipynb
 debug.log
+
+# cython build artifacts
+*.so
+*.c
+*.html
