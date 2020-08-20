@@ -3,27 +3,20 @@ Usage:
 `python dashboard.py`
 """
 import os.path
-from typing import List, Dict, Union
-import sys
+from typing import List
 
-import dash
 import dash_bootstrap_components as dbc
 import dash_core_components as dcc
 import dash_html_components as html
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from dash.dependencies import Input, Output, State
-import numpy as np
 
-try:
-    from .utils import *
-    from .data_loader import *
-    from ..dashboard import app
-except ImportError:
-    from utils import *
-    from data_loader import *
-    from __init__ import app
+from dashboard import app
+from dashboard.data_loader import *
+from dashboard.utils import *
 
 grid_searches = get_grid_searches()
 grid_search_params = get_all_grid_search_params()
