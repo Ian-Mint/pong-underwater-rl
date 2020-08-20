@@ -955,8 +955,8 @@ class Actor(Worker):
             self.memory_queue.put(
                 Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward, done)
             )
-            if self.memory_queue.full():
-                self.logger.debug(f'memory_queue FULL')
+            # if self.memory_queue.full():
+            #     self.logger.debug(f'memory_queue FULL')
         return done, reward, next_state
 
     def _select_action(self, state: torch.Tensor) -> int:
@@ -1116,8 +1116,8 @@ class Encoder(Worker):
             actor_id, step_number, state, action, next_state, reward, done = transition
             del transition
 
-            if self.memory_queue.empty():
-                self.logger.debug(f'memory_queue EMPTY')
+            # if self.memory_queue.empty():
+            #     self.logger.debug(f'memory_queue EMPTY')
 
             self._check_inputs(action, next_state, reward, state)
             next_state, state = self._process_states(next_state, state)
@@ -1126,8 +1126,8 @@ class Encoder(Worker):
                 self._get_transition(action, actor_id, done, next_state, reward, state, step_number)
             )
 
-            if self.replay_in_queue.full():
-                self.logger.debug(f'replay_in_queue FULL')
+            # if self.replay_in_queue.full():
+            #     self.logger.debug(f'replay_in_queue FULL')
 
     @staticmethod
     def _process_states(next_state, state) -> Tuple[np.ndarray, np.ndarray]:
@@ -1311,16 +1311,16 @@ class Replay(Worker):
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.debug("Replay memory push worker started")
 
-        buffer_len = 100
+        buffer_len = 1000
         while True:
             sample = self.replay_in_queue.get()
             if sample is None:
                 break
-            if self.replay_in_queue.empty():
-                self.logger.debug(f'replay_in_queue EMPTY')
+            # if self.replay_in_queue.empty():
+            #     self.logger.debug(f'replay_in_queue EMPTY')
 
             self.buffer_in.append(sample)
-            if len(self.buffer_in) >= self.initial_memory // buffer_len:
+            if len(self.buffer_in) >= buffer_len:
                 index = self.sample_count % self.memory_maxlen
                 self.memory[index: index + buffer_len] = self.buffer_in
 
