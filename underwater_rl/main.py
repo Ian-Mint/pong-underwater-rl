@@ -354,7 +354,7 @@ class Learner(Worker):
                  pipes: List[ParamPipe], checkpoint_path: str,
                  log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]],
-                 n_decoders: int = 10):
+                 n_decoders: int = 5):
         """
         In two separate processes, decodes sampled data and runs training.
 
@@ -1674,8 +1674,8 @@ def get_communication_objects(n_pipes: int) -> Tuple[mp.Queue, mp.Queue, mp.Queu
     """
     memory_queue = mp.Queue(maxsize=1_000)
     replay_in_queue = mp.Queue(maxsize=1_000)
-    replay_out_queue = mp.Queue(maxsize=10_000)
-    sample_queue = mp.Queue(maxsize=20)
+    replay_out_queue = mp.Queue(maxsize=1_000)
+    sample_queue = mp.Queue(maxsize=1_000)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
     return memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes
