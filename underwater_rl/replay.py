@@ -5,8 +5,6 @@ import time
 from collections import deque
 from typing import Dict, Union
 
-ctypedef unsigned char uint8
-
 try:
     from .utils import get_logger_from_process
 except ImportError:

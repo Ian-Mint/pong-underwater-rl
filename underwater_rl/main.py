@@ -21,6 +21,7 @@ import io
 import logging
 import math
 import os
+import pickle
 import random
 import shutil
 import sys
@@ -42,7 +43,7 @@ from PIL import Image
 from matplotlib import pyplot as plt
 from torchvision import transforms
 
-sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 if not ('linux' in sys.platform):
     raise Warning(f"{sys.platform} is not supported")
 
@@ -63,7 +64,8 @@ MAX_STEPS_PER_EPISODE = 50_000
 N_ACTIONS = 3
 ACTOR_UPDATE_INTERVAL = 1000
 LOG_INTERVAL = 20  # number of episodes between logging
-CHECKPOINT_INTERVAL = 1000  # number of batches between storing a checkpoint
+CHECKPOINT_INTERVAL = 1  # number of batches between storing a checkpoint
+TARGET_UPDATE_INTERVAL = 1  # number of batches between updating the target network
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 
@@ -268,7 +270,7 @@ class Learner(Worker):
 
     def _terminate(self) -> None:
         """
-        _terminate and join the main process
+        terminate and join the main process
         """
         self.main_proc.terminate()
         self.main_proc.join()
@@ -315,9 +317,11 @@ class Learner(Worker):
             batch = self._sample()
             if batch is None:
                 break
+
             self._optimize_model(batch)
-            self._update_target_net()
-            if self.epoch % CHECKPOINT_INTERVAL:
+            if self.epoch % TARGET_UPDATE_INTERVAL == 0:
+                self._update_target_net()
+            if self.epoch % CHECKPOINT_INTERVAL == 0:
                 self._save_checkpoint()
 
     def _copy_params(self) -> None:
@@ -801,13 +805,19 @@ class Actor(Worker):
             next_state = get_state(obs, self.device)
         else:
             next_state = State(None)
-        if not self.test_mode:
-            self.memory_queue.put(
-                Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward, done)
-            )
-            if self.memory_queue.full():
-                self.logger.debug(f'memory_queue FULL')
+
+        self._end_step(action, done, next_state, reward, state)
         return done, reward, next_state
+
+    def _end_step(self, action, done, next_state, reward, state):
+        """
+        Do whatever needs to be done after the step is complete
+        """
+        self.memory_queue.put(
+            Transition(self.id, self.total_steps, state.cpu, action, next_state.cpu, reward, done)
+        )
+        if self.memory_queue.full():
+            self.logger.debug(f'memory_queue FULL')
 
     def _select_action(self, state: torch.Tensor) -> int:
         r"""
@@ -866,6 +876,7 @@ class ActorTest(Actor):
     """
     Not a true subclass of Actor. Runs blocking in a single process.
     """
+    counter = 0
 
     # noinspection PyMissingConstructor
     def __init__(self,
@@ -905,11 +916,27 @@ class ActorTest(Actor):
         self.episode = 0
         self.total_steps = 0
         self.history = []
-
-        self.main_proc = mp.Process(target=self._main, name=f"Actor-{self.id}")
+        self.memory = []
 
     def __del__(self):
         pass
+
+    # noinspection PyMethodOverriding
+    def _parse_options(self, eps_decay: float, eps_end: float, eps_start: float, save_transitions: bool,
+                       **kwargs) -> None:
+        r"""
+        Assign actor attributes
+
+        :param eps_decay: Epsilon decay rate. See `Actor._epsilon`
+        :param eps_end: Minimum epsilon
+        :param eps_start: Maximum epsilon
+        :param save_transitions: If true, save transitions in  a pickle file
+        :return:
+        """
+        self.eps_decay = eps_decay
+        self.eps_end = eps_end
+        self.eps_start = eps_start
+        self.save_transitions = save_transitions
 
     def _main(self):
         raise NotImplementedError
@@ -917,10 +944,28 @@ class ActorTest(Actor):
     def _terminate(self):
         raise NotImplementedError
 
+    def _update_params(self) -> None:
+        pass
+
+    def join(self) -> None:
+        pass
+
     def start(self) -> None:
         self._main_loop()
         self.env.close()
         self._finish_rendering()
+        self._save_transitions()
+
+    def _save_transitions(self):
+        if self.save_transitions:
+            with open('memory.p', 'wb') as f:
+                pickle.dump(self.memory, f)
+
+    def _end_step(self, action, done, next_state, reward, state):
+        if self.save_transitions:
+            self.memory.append(
+                (self.id, self.total_steps, state.cpu, action, next_state.cpu, reward, done)
+            )
 
 
 class Encoder(Worker):
@@ -1195,6 +1240,8 @@ def get_parser() -> argparse.ArgumentParser:
                          help='switch for pretrained network (default: False)')
     rl_args.add_argument('--test', default=False, action='store_true',
                          help='Run the model without training')
+    rl_args.add_argument('--save-transitions', default=False, action='store_true',
+                         help='If true, save transitions in "transitions.p"')
     rl_args.add_argument('--render', default=False, type=str, choices=['human', 'png'],
                          help="Rendering mode. Omit if no rendering is desired.")
     rl_args.add_argument('--epsdecay', default=1000, type=int,
@@ -1231,6 +1278,7 @@ def get_parser() -> argparse.ArgumentParser:
     '''debug args'''
     debug_args = parser.add_argument_group("Debug")
     debug_args.add_argument('--debug', action='store_true', help='Debug mode')
+
     return parser
 
 
@@ -1274,6 +1322,7 @@ def main() -> None:
 def test(args, logger):
     actor_params = {
         'test_mode': True,
+        'save_transitions': args.save_transitions,
         'architecture': args.network,
         'steps_decay': args.steps_decay,
         'eps_decay': args.epsdecay,
