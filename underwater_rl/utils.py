@@ -9,8 +9,6 @@ import logging.handlers
 import os
 import re
 import threading
-import time
-from collections import namedtuple
 from logging.handlers import QueueHandler
 from typing import Tuple
 
@@ -19,7 +17,9 @@ import numpy as np
 import torch
 
 __all__ = ['get_logger', 'models_are_equal', 'convert_images_to_video', 'distr_projection', 'get_args_status_string',
-           'get_logger_from_process', 'Transition', 'HistoryElement']
+           'get_logger_from_process']
+
+from matplotlib import pyplot as plt
 
 from torch import multiprocessing as mp
 
@@ -190,8 +190,18 @@ def get_logger_from_process(log_queue: mp.Queue) -> logging.Logger:
     return logger
 
 
-Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'action', 'next_state', 'reward', 'done'))
-HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
+def display_state(state: torch.Tensor) -> None:
+    r"""
+    Displays the passed state using matplotlib
+
+    :param state: torch.Tensor
+    """
+    np_state = state.numpy().squeeze()
+    fig, axs = plt.subplots(1, len(np_state), figsize=(20, 5))
+    for img, ax in zip(np_state, axs):
+        ax.imshow(img, cmap='gray')
+    fig.show()
+
 
 if __name__ == '__main__':
     # arguments

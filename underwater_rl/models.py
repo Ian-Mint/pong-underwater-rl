@@ -8,7 +8,7 @@ except ImportError:
     from torch.utils.model_zoo import load_url as load_state_dict_from_url
 
 __all__ = ['DQNbn', 'DQN', 'DuelingDQN', 'softDQN', 'DistributionalDQN', 'ResNet', 'resnet18', 'resnet10', 'resnet12',
-           'resnet14', 'PolicyGradient', 'Actor', 'Critic', 'DRQN']
+           'resnet14', 'PolicyGradient', 'ActorModel', 'CriticModel', 'DRQN']
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 
@@ -99,7 +99,7 @@ class PolicyGradient(nn.Module):
         return action_prob
 
 
-class Critic(nn.Module):
+class CriticModel(nn.Module):
     def __init__(self, in_channels=4, n_actions=14):
         """
         Initialize Deep Q Network
@@ -108,7 +108,7 @@ class Critic(nn.Module):
             in_channels (int): number of input channels
             n_actions (int): number of outputs
         """
-        super(Critic, self).__init__()
+        super(CriticModel, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
@@ -124,7 +124,7 @@ class Critic(nn.Module):
         return self.head(x)
 
 
-class Actor(nn.Module):
+class ActorModel(nn.Module):
     def __init__(self, in_channels=4, n_actions=14):
         """
         Initialize Deep Q Network
@@ -133,7 +133,7 @@ class Actor(nn.Module):
             in_channels (int): number of input channels
             n_actions (int): number of outputs
         """
-        super(Actor, self).__init__()
+        super(ActorModel, self).__init__()
         self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
         self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)

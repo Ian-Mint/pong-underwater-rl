@@ -51,11 +51,11 @@ class Replay:
         self.mode = mode
 
         self.buffer_in = []
+        self.buffer_length = self.initial_memory // 100
         self.memory = deque(maxlen=params['memory_size'])
 
         self.logger = None
         self.push_thread = None  # can't pass Thread objects to a new process using spawn or forkserver
-        self.lock = None
         self.proc = mp.Process(target=self._main, name="Replay")
 
     def __del__(self):
@@ -89,7 +89,7 @@ class Replay:
 
         self.lock = threading.Lock()
 
-        self.push_thread = threading.Thread(target=self._push_worker, daemon=True, name="Push")
+        self.push_thread = threading.Thread(target=self._push_worker, daemon=True, name="ReplayPush")
         self.push_thread.start()
         self._sample_worker()  # run _sample worker in the main thread
 
@@ -98,30 +98,37 @@ class Replay:
         Pushes from replay_in_queue to `memory`
         """
         self.logger.debug("Replay memory push worker started")
-        while True:
-            sample = self.replay_in_queue.get()
-            if self.replay_in_queue.empty():
-                self.logger.debug(f'replay_in_queue EMPTY')
+        is_running = True
+        while is_running:
+            is_running = self._push()
 
-            self.buffer_in.append(sample)
-            if len(self.buffer_in) >= self.initial_memory // 100:
-                with self.lock:
-                    self.memory.extend(self.buffer_in)
-                self.buffer_in = []
+    def _push(self):
+        sample = self.replay_in_queue.get()
+        if sample is None:
+            return False
+        if self.replay_in_queue.empty():
+            self.logger.debug(f'replay_in_queue EMPTY')
+        self.buffer_in.append(sample)
+        if len(self.buffer_in) >= self.buffer_length:
+            self.memory.extend(self.buffer_in)
+            self.buffer_in = []
+        return True
 
     def _sample_worker(self) -> None:
         r"""
         Generates samples from memory of length `batch_size` and pushes to `replay_out_queue`
         """
-        self.logger.debug("Replay memory _sample worker started")
+        self.logger.debug("Replay memory sample worker started")
         self._wait_for_full_memory()
 
         while True:
-            with self.lock:
-                batch = random.choices(self.memory, k=self.batch_size)
-            self.replay_out_queue.put(batch)
-            if self.replay_out_queue.full():
-                self.logger.debug(f'replay_out_queue FULL')
+            self._sample()
+
+    def _sample(self):
+        batch = random.choices(self.memory, k=self.batch_size)
+        self.replay_out_queue.put(batch)
+        if self.replay_out_queue.full():
+            self.logger.debug(f'replay_out_queue FULL')
 
     def _wait_for_full_memory(self) -> None:
         """

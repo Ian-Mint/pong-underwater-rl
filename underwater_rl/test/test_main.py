@@ -16,6 +16,9 @@ import torch.nn as nn
 import torch.optim as optim
 from PIL import Image
 
+import underwater_rl.actor
+import underwater_rl.base
+import underwater_rl.learner
 import underwater_rl.utils
 
 try:
@@ -59,7 +62,7 @@ def set_main_args():
     main.PRIORITY = False
     main.MEMORY_SIZE = 10000
     main.TARGET_UPDATE = 1000
-    main.CHECKPOINT_INTERVAL = 100
+    underwater_rl.learner.CHECKPOINT_INTERVAL = 100
     main.LOG_INTERVAL = 20
     main.BATCH_SIZE = 32
     main.DOUBLE = False
@@ -87,32 +90,32 @@ class TestEnv(unittest.TestCase):
 
     def test_lstm_env_is_not_stacked_after_reset(self):
         main.ARCHITECTURE = 'lstm'
-        env = main.dispatch_make_env(args)
+        env = underwater_rl.actor.dispatch_make_env(args)
         obs = env.reset()
-        state = main.get_state(obs)
+        state = underwater_rl.actor.get_state(obs)
         self.assertEqual((1, 1, 84, 84), state.size())
 
     def test_default_env_has_4_frames_stacked_after_reset(self):
         main.ARCHITECTURE = None
-        env = main.dispatch_make_env(args)
+        env = underwater_rl.actor.dispatch_make_env(args)
         obs = env.reset()
-        state = main.get_state(obs)
+        state = underwater_rl.actor.get_state(obs)
         self.assertEqual((1, 4, 84, 84), state.size())
 
     def test_lstm_env_is_not_stacked_after_step(self):
         main.ARCHITECTURE = 'lstm'
-        env = main.dispatch_make_env(args)
+        env = underwater_rl.actor.dispatch_make_env(args)
         _ = env.reset()
         obs, reward, done, info = env.step(0)
-        state = main.get_state(obs)
+        state = underwater_rl.actor.get_state(obs)
         self.assertEqual((1, 1, 84, 84), state.size())
 
     def test_default_env_has_4_frames_stacked_after_step(self):
         main.ARCHITECTURE = None
-        env = main.dispatch_make_env(args)
+        env = underwater_rl.actor.dispatch_make_env(args)
         _ = env.reset()
         obs, reward, done, info = env.step(0)
-        state = main.get_state(obs)
+        state = underwater_rl.actor.get_state(obs)
         self.assertEqual((1, 4, 84, 84), state.size())
 
 
@@ -129,7 +132,7 @@ class TestMemoryEncoder(unittest.TestCase):
     def set_state(self, shape: tuple):
         x = np.linspace(0, 255, reduce(mul, shape)).reshape(shape).astype(np.uint8)
         self.state = torch.from_numpy(x)
-        self.memory_queue.put(underwater_rl.utils.Transition(0, 0, self.state, 0, self.state, 0))
+        self.memory_queue.put(underwater_rl.base.Transition(0, 0, self.state, 0, self.state, 0))
 
     def tearDown(self) -> None:
         self.proc.terminate()
@@ -193,11 +196,11 @@ class TestActor(unittest.TestCase):
 
         model = main.initialize_model(args.architecture)
         memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects(args.actors)
-        self.actor = main.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
-                                replay_in_queue=replay_out_queue, pipe=None, global_args=, log_queue=, actor_params=)
+        self.actor = underwater_rl.actor.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
+                                               replay_in_queue=replay_out_queue, pipe=None, global_args=, log_queue=, actor_params=)
 
         obs = self.actor.env.reset()
-        self.state = main.get_state(obs)
+        self.state = underwater_rl.actor.get_state(obs)
 
     def tearDown(self) -> None:
         # noinspection PyTypeChecker
@@ -275,9 +278,9 @@ class TestLearner(unittest.TestCase):
 
         model = main.initialize_model(args.architecture)
         _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects(args.actors)
-        self.learner = main.Learner(optimizer=optim.Adam, model=model, replay_out_queue=replay_out_queue,
-                                    sample_queue=sample_queue, pipes=params_out, checkpoint_path=, log_queue=,
-                                    learning_params=)
+        self.learner = underwater_rl.learner.Learner(optimizer=optim.Adam, model=model, replay_out_queue=replay_out_queue,
+                                                     sample_queue=sample_queue, pipes=params_out, checkpoint_path=, log_queue=,
+                                                     learning_params=)
 
     def tearDown(self) -> None:
         del self.learner
