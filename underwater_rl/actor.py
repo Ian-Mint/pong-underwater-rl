@@ -23,7 +23,7 @@ try:
     from underwater_rl.wrappers import LazyFrames, make_env
 except ImportError:
     from base import BaseWorker, ParamPipe, Transition, HistoryElement, DEVICE
-    from utils import get_logger_from_process, HistoryElement, Transition, convert_images_to_video
+    from utils import get_logger_from_process, convert_images_to_video
     from wrappers import LazyFrames, make_env
 
 
