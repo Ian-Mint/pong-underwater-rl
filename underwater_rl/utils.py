@@ -2,10 +2,10 @@
 
 import argparse
 import glob
-import multiprocessing as mp
 import logging
 import logging.config
 import logging.handlers
+import multiprocessing as mp
 import os
 import re
 import threading
@@ -17,11 +17,16 @@ import numpy as np
 import torch
 
 __all__ = ['get_logger', 'models_are_equal', 'convert_images_to_video', 'distr_projection', 'get_args_status_string',
-           'get_logger_from_process']
+           'get_logger_from_process', 'get_tid']
 
 from matplotlib import pyplot as plt
 
 from torch import multiprocessing as mp
+
+
+def get_tid():
+    """Get TID as displayed by htop."""
+    return threading.get_native_id()
 
 
 def get_logger(store_dir) -> Tuple[logging.Logger, mp.Queue]:

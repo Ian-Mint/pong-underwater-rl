@@ -16,10 +16,10 @@ from torchvision import transforms
 
 try:
     from underwater_rl.base import BaseWorker, ParamPipe, Transition
-    from underwater_rl.utils import get_logger_from_process
+    from underwater_rl.utils import get_logger_from_process, get_tid
 except ImportError:
     from base import BaseWorker, ParamPipe, Transition
-    from utils import get_logger_from_process
+    from utils import get_logger_from_process, get_tid
 
 
 CHECKPOINT_INTERVAL = 1  # number of batches between storing a checkpoint
@@ -112,7 +112,7 @@ class Decoder(BaseWorker):
         transition: Transition
 
         self.logger = get_logger_from_process(self.log_queue)
-        self.logger.debug("Decoder process started")
+        self.logger.debug(f"tid: {get_tid()} | Decoder process started")
 
         while True:
             batch = self.replay_out_queue.get()
@@ -365,7 +365,7 @@ class Learner(BaseWorker):
         [d.start() for d in decoders]
 
         self.logger = get_logger_from_process(self.log_queue)
-        self.logger.info(f"Learner started on device {self.device}")
+        self.logger.info(f"tid: {get_tid()} | Learner started on device {self.device}")
 
         self.policy_lock = threading.Lock()
         self.params_lock = threading.Lock()

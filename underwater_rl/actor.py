@@ -19,11 +19,11 @@ from torch import nn as nn, multiprocessing as mp
 
 try:
     from underwater_rl.base import BaseWorker, ParamPipe, Transition, HistoryElement, DEVICE
-    from underwater_rl.utils import get_logger_from_process, convert_images_to_video
+    from underwater_rl.utils import get_logger_from_process, convert_images_to_video, get_tid
     from underwater_rl.wrappers import LazyFrames, make_env
 except ImportError:
     from base import BaseWorker, ParamPipe, Transition, HistoryElement, DEVICE
-    from utils import get_logger_from_process, convert_images_to_video
+    from utils import get_logger_from_process, convert_images_to_video, get_tid
     from wrappers import LazyFrames, make_env
 
 
@@ -213,7 +213,7 @@ class Actor(BaseWorker):
 
         self._set_num_threads(1)
         self.logger = get_logger_from_process(self.log_queue)
-        self.logger.info(f"Actor-{self.id} started on device {self.device}")
+        self.logger.info(f"tid: {get_tid()} | Actor-{self.id} started on device {self.device}")
 
         self._main_loop()
         self.memory_queue.put(None)  # signal encoder queue to terminate
@@ -480,7 +480,7 @@ class Encoder(BaseWorker):
         transition: Transition
 
         self.logger = get_logger_from_process(self.log_queue)
-        self.logger.debug("Memory encoder process started")
+        self.logger.debug(f"tid: {get_tid()} | Memory encoder process started")
         while True:
             transition = self.memory_queue.get()
             if transition is None:  # The actor is done
