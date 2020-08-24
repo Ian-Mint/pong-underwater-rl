@@ -134,6 +134,7 @@ class Decoder(BaseWorker):
                                              idxs=None, weights=None)
 
             self.sample_queue.put(processed_batch)
+            self.logger.debug(f'sample_queue {self.sample_queue.qsize()}')
             if self.sample_queue.full():
                 self.logger.debug(f'sample_queue FULL')
 
@@ -409,7 +410,7 @@ class Learner(BaseWorker):
         cuda_state_dict = self.policy.state_dict()
         self.params = OrderedDict()
         for k, v in cuda_state_dict.items():
-            self.params[k] = v.to('cpu')
+            self.params[k] = v.to('cpu', non_blocking=True)
 
     def _send_params(self, pipe: ParamPipe) -> None:
         """
@@ -420,6 +421,7 @@ class Learner(BaseWorker):
         while self.params is None:
             time.sleep(1)
 
+        # todo: this needs to be reworked. the pipe works like a queue, when we need it to hold just one item
         while True:
             if pipe.event.is_set():
                 with self.params_lock:
