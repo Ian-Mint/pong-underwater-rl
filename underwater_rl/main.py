@@ -280,7 +280,7 @@ def train(args, logger, log_queue):
 
     learner = Learner(optimizer=optim.Adam, model=model, replay_out_queue=replay_out_queue, sample_queue=sample_queue,
                       pipes=pipes, checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'), log_queue=log_queue,
-                      learning_params=learning_params)
+                      learning_params=learning_params, n_decoders=10)
     replay = Replay(replay_in_queue, replay_out_queue, log_queue, replay_params)
 
     # Start subprocesses
@@ -325,7 +325,7 @@ def get_communication_objects(n_pipes: int) -> Tuple[mp.Queue, mp.Queue, mp.Queu
     """
     memory_queue = mp.Queue(maxsize=1_000)
     replay_in_queue = mp.Queue(maxsize=1_000)
-    replay_out_queue = mp.Queue(maxsize=100)
+    replay_out_queue = mp.Queue(maxsize=1_000)
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
