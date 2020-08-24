@@ -112,7 +112,7 @@ class Decoder(BaseWorker):
         transition: Transition
 
         self.logger = get_logger_from_process(self.log_queue)
-        self.logger.debug(f"tid: {get_tid()} | Decoder process started")
+        self.logger.info(f"tid: {get_tid()} | Decoder process started")
 
         while True:
             batch = self.replay_out_queue.get()

@@ -480,7 +480,7 @@ class Encoder(BaseWorker):
         transition: Transition
 
         self.logger = get_logger_from_process(self.log_queue)
-        self.logger.debug(f"tid: {get_tid()} | Memory encoder process started")
+        self.logger.info(f"tid: {get_tid()} | Memory encoder process started")
         while True:
             transition = self.memory_queue.get()
             if transition is None:  # The actor is done

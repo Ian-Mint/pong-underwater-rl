@@ -85,7 +85,7 @@ class Replay:
         Launch push thread and run push worker in the main thread.
         """
         self.logger = get_logger_from_process(self.log_queue)
-        self.logger.debug(f"tid: {get_tid()} | Replay process started")
+        self.logger.info(f"tid: {get_tid()} | Replay process started")
 
         self.lock = threading.Lock()
 
@@ -97,7 +97,7 @@ class Replay:
         r"""
         Pushes from replay_in_queue to `memory`
         """
-        self.logger.debug(f"tid: {get_tid()} | Replay memory push worker started")
+        self.logger.info(f"tid: {get_tid()} | Replay memory push worker started")
         is_running = True
         while is_running:
             is_running = self._push()
@@ -118,7 +118,7 @@ class Replay:
         r"""
         Generates samples from memory of length `batch_size` and pushes to `replay_out_queue`
         """
-        self.logger.debug(f"tid: {get_tid()} | Replay memory sample worker started")
+        self.logger.info(f"tid: {get_tid()} | Replay memory sample worker started")
         self._wait_for_full_memory()
 
         while True:
