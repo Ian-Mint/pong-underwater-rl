@@ -127,8 +127,7 @@ class Replay:
     def _sample(self):
         batch = random.choices(self.memory, k=self.batch_size)
         self.replay_out_queue.put(batch)
-        if self.replay_out_queue.full():
-            self.logger.debug(f'replay_out_queue FULL')
+        self.logger.debug(f'replay_out_queue {self.replay_out_queue.qsize()}')
 
     def _wait_for_full_memory(self) -> None:
         """
