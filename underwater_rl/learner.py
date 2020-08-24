@@ -133,8 +133,7 @@ class Decoder(BaseWorker):
                                              idxs=None, weights=None)
 
             self.sample_queue.put(processed_batch)
-            if self.sample_queue.full():
-                self.logger.debug(f'sample_queue FULL')
+            self.logger.debug(f'sample_queue {self.sample_queue.qsize()}')
 
     def _decode_transition(self, transition: Transition) -> Transition:
         actor_id, step_number, state, action, next_state, reward, done = transition
@@ -446,8 +445,7 @@ class Learner(BaseWorker):
         :return: ProcessedBatch object on `device`
         """
         processed_batch = self.sample_queue.get()
-        if self.sample_queue.empty():
-            self.logger.debug(f'sample_queue EMPTY')
+        self.logger.debug(f'sample_queue {self.sample_queue.qsize()}')
         return processed_batch.to(self.device)
 
     def _forward_policy(self, action_batch: torch.Tensor, state_batch: torch.Tensor) -> torch.Tensor:
