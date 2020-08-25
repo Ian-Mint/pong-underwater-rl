@@ -10,8 +10,12 @@ Results:
 6.416077349989791
 
 On 4-core CPU:
-190 samples processed in 60 seconds
+    190 samples processed in 60 seconds
 
+On GPU:
+    2637-2718 samples processed in 60 seconds
+
+Learner runs at 53% GPU given a full queue
 """
 from itertools import count
 import os
@@ -19,9 +23,12 @@ import pickle
 import threading
 import time
 from timeit import timeit
+import sys
 
 from torch import optim
 import torch.multiprocessing as mp
+
+sys.path.append(os.path.join(os.path.pardir, os.path.pardir))
 
 import underwater_rl.main as rl_main
 import underwater_rl.learner as learn
@@ -60,7 +67,7 @@ def main():
     learner = learn.Learner(
         optimizer=optim.Adam, model=model, replay_out_queue=replay_out_queue, sample_queue=sample_queue,
         pipes=pipes, checkpoint_path=os.path.join(LOG_DIR, 'dqn.torch'), log_queue=log_queue,
-        learning_params=learning_params
+        learning_params=learning_params, n_decoders=0
     )
 
     queue_pusher = threading.Thread(target=queue_maintainer, args=(sample_queue, ), daemon=True)

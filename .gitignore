@@ -5,6 +5,7 @@ dqn_pong_model
 cache/
 *.ipynb
 debug.log
+*.swp
 
 # test artifacts
 underwater_rl/test/assets/memory-np.p
