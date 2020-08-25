@@ -102,8 +102,9 @@ def test_dataloader(replay, batch_size=10):
     return test_loader
 
 def load_model(store_dir):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = EncoderDecoderConvLSTM(nf=64, in_chan=1)
     path = os.path.join(store_dir, 'pred.pth.tar')
     model = nn.DataParallel(model)
     model.load_state_dict(torch.load(path))
-    return model
+    return model.to(device)
