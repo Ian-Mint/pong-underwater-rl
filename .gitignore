@@ -6,6 +6,10 @@ cache/
 *.ipynb
 debug.log
 
+# test artifacts
+underwater_rl/test/assets/memory-np.p
+underwater_rl/test/tmp
+
 # Cython build artifacts
 underwater_rl/*.html
 underwater_rl/*.c

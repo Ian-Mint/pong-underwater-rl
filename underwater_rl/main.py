@@ -280,7 +280,7 @@ def train(args, logger, log_queue):
 
     learner = Learner(optimizer=optim.Adam, model=model, replay_out_queue=replay_out_queue, sample_queue=sample_queue,
                       pipes=pipes, checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'), log_queue=log_queue,
-                      learning_params=learning_params, n_decoders=10)
+                      learning_params=learning_params, n_decoders=2)
     replay = Replay(replay_in_queue, replay_out_queue, log_queue, replay_params)
 
     # Start subprocesses

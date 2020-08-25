@@ -76,6 +76,8 @@ class ProcessedBatch:
 class Decoder(BaseWorker):
     """
     Decoder worker. One or more may be run alongside the learner to process sample batches.
+
+    The bottleneck seems to be with `replay_out_queue`. Currently, two decoders can handle the output.
     """
 
     def __init__(self, log_queue: mp.Queue, replay_out_queue: mp.Queue, sample_queue: mp.Queue, num: int, daemon=True):
