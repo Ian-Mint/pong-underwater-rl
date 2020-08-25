@@ -59,7 +59,7 @@ def select_e_greedy_action(state):
                 return (policy_net.qvals(state.to(device))).argmax()
             elif architecture == 'predict_dqn':
                 with torch.no_grad():
-                    predict_model = train_pong.load_model(args.store_dir).to(device)
+                    predict_model = train_pong.load_model(args.store_dir)
                     predicted_state = predict_model(state.unsqueeze(2).float()/255, future_seq=4).squeeze(1)*255
                     full_state_batch = torch.cat((state.float().to(device), predicted_state), dim=1)
                 return policy_net(full_state_batch).max(1)[1]
@@ -161,7 +161,7 @@ def optimize_predict():
     non_final_mask, non_final_next_states = mask_non_final(batch)
     action_batch, reward_batch, state_batch = separate_batches(actions, batch, rewards)     # (batch_size, 4, 84, 84), uint8
     # predict
-    predict_model = train_pong.load_model(args.store_dir).to(device)
+    predict_model = train_pong.load_model(args.store_dir)
     with torch.no_grad():
         predicted_state_batch = predict_model(state_batch.unsqueeze(2).float()/255, future_seq=4).squeeze()*255
         full_state_batch = torch.cat((state_batch.float(), predicted_state_batch), dim=1)
