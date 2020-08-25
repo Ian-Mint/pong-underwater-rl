@@ -277,7 +277,8 @@ class Learner(BaseWorker):
                  pipes: List[ParamPipe], checkpoint_path: str,
                  log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]],
-                 n_decoders: int = 2):
+                 n_decoders: int = 2,
+                 run_profile: bool = False):
         """
         In two separate processes, decodes sampled data and runs training.
 
@@ -290,11 +291,13 @@ class Learner(BaseWorker):
         :param checkpoint_path: Checkpoint save path
         :param log_queue: Queue object to be pushed to the log handler for the learner process
         :param learning_params: Parameters to control learning
+        :param run_profile: If `True`, run optimizer with cProfile. 
         """
         self.replay_out_queue = replay_out_queue
         self.sample_queue = sample_queue
         self.pipes = pipes
         self.log_queue = log_queue
+        self._run_profile = run_profile
 
         self.checkpoint_path = checkpoint_path
         self._parse_options(**learning_params)
@@ -370,8 +373,12 @@ class Learner(BaseWorker):
         self.policy_lock = threading.Lock()
         self.params_lock = threading.Lock()
 
-        # TODO: put this stuff in a new process instead of threads so that we get 100% CPU usage on the learner
+        # TODO: put this stuff in a new process with multiple threads so that we get 100% CPU usage on the learner
         param_update_thread = threading.Thread(target=self._copy_params, name='UpdateParams', daemon=True)
+        if self._run_profile:
+            import yappi
+            yappi.start()
+
         param_update_thread.start()
         for n, p in enumerate(self.pipes):
             t = threading.Thread(target=self._send_params, args=(p,), name=f'SendParams-{n}', daemon=True)
@@ -379,6 +386,13 @@ class Learner(BaseWorker):
 
         self._optimizer_loop()
         [d.join() for d in decoders]
+
+        if self._run_profile:
+            yappi.stop()
+            threads = yappi.get_thread_stats()
+            for thread in threads:
+                print("Function stats for (%s) (%d)" % (thread.name, thread.id))
+                yappi.get_func_stats(ctx_id=thread.id).print_all()
 
     def _optimizer_loop(self) -> None:
         """
@@ -394,6 +408,8 @@ class Learner(BaseWorker):
                 self._update_target_net()
             if self.epoch % CHECKPOINT_INTERVAL == 0:
                 self._save_checkpoint()
+
+        self._save_checkpoint()
 
     def _copy_params(self) -> None:
         """
@@ -420,7 +436,7 @@ class Learner(BaseWorker):
         while self.params is None:
             time.sleep(1)
 
-        # todo: this needs to be reworked. the pipe works like a queue, when we need it to hold just one item
+        # todo: rework on receiving end. the pipe works like a queue, when we need it to hold just one item
         while True:
             if pipe.event.is_set():
                 with self.params_lock:
@@ -448,7 +464,9 @@ class Learner(BaseWorker):
         """
         processed_batch = self.sample_queue.get()
         self.logger.debug(f'sample_queue {self.sample_queue.qsize()}')
-        return processed_batch.to(self.device)
+        if processed_batch is not None:
+            processed_batch = processed_batch.to(self.device)
+        return processed_batch
 
     def _forward_policy(self, action_batch: torch.Tensor, state_batch: torch.Tensor) -> torch.Tensor:
         """
