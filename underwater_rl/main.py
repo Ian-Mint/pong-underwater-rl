@@ -57,6 +57,12 @@ def select_e_greedy_action(state):
         with torch.no_grad():
             if architecture == 'distribution_dqn':
                 return (policy_net.qvals(state.to(device))).argmax()
+            elif architecture == 'predict_dqn':
+                with torch.no_grad():
+                    predict_model = train_pong.load_model(args.store_dir).to(device)
+                    predicted_state = predict_model(state.unsqueeze(2).float()/255, future_seq=4).squeeze(1)*255
+                    full_state_batch = torch.cat((state.float().to(device), predicted_state), dim=1)
+                return policy_net(full_state_batch).max(1)[1]
             else:
                 return policy_net(state.to(device)).max(1)[1]
     else:
@@ -155,11 +161,11 @@ def optimize_predict():
     non_final_mask, non_final_next_states = mask_non_final(batch)
     action_batch, reward_batch, state_batch = separate_batches(actions, batch, rewards)     # (batch_size, 4, 84, 84), uint8
     # predict
-    predict_model = train_pong.load_model(args.store_dir)
+    predict_model = train_pong.load_model(args.store_dir).to(device)
     with torch.no_grad():
-        predicted_state_batch = predict_model(state_batch.unsqueeze(2).float()).squeeze()
+        predicted_state_batch = predict_model(state_batch.unsqueeze(2).float()/255, future_seq=4).squeeze()*255
         full_state_batch = torch.cat((state_batch.float(), predicted_state_batch), dim=1)
-        predicted_next_batch = predict_model(non_final_next_states.unsqueeze(2).float()).squeeze()
+        predicted_next_batch = predict_model(non_final_next_states.unsqueeze(2).float()/255, future_seq=4).squeeze()*255
         full_next_batch = torch.cat((non_final_next_states.float(), predicted_next_batch), dim=1)
 
     state_action_values = forward_policy(action_batch, full_state_batch)
@@ -630,7 +636,7 @@ def get_parser():
                          help='learning rate (default: 1e-4)')
     rl_args.add_argument('--network', default='dqn_pong_model',
                          choices=['dqn_pong_model', 'soft_dqn', 'dueling_dqn', 'resnet18', 'resnet10', 'resnet12',
-                                  'resnet14', 'noisy_dqn', 'lstm', 'distribution_dqn'],
+                                  'resnet14', 'noisy_dqn', 'predict_dqn', 'lstm', 'distribution_dqn'],
                          help='choose a network architecture (default: dqn_pong_model)')
     rl_args.add_argument('--double', default=False, action='store_true',
                          help='switch for double dqn (default: False)')
