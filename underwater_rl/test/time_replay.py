@@ -1,3 +1,7 @@
+"""
+144 samples pushed in 60s
+"""
+from itertools import count
 import os
 import pickle
 import queue
@@ -8,16 +12,18 @@ import multiprocessing as mp
 import multiprocessing.queues as queues
 import sys
 
-try:
-    from underwater_rl.replay import Replay
-    from underwater_rl.base import Transition
-except ImportError:
-    sys.path.append(os.path.dirname(os.path.abspath(os.curdir)))
-    from replay import Replay
-    from base import Transition
+sys.path.append(os.path.abspath(os.path.join(os.path.pardir, os.path.pardir)))
+from underwater_rl.main import get_communication_objects, get_logger, get_logger_from_process
+from underwater_rl.replay import Replay
+from underwater_rl.common import Transition
+from underwater_rl.utils import get_tid
 
 PATH_TO_DATA_STR = 'assets/memory.p'
-_ctx = mp.get_context()
+replay_params = {
+    'memory_size': 1000,
+    'initial_memory': 1000,  # Wait for the memory buffer to fill before training
+    'batch_size': 512
+}
 
 
 class InputQueueMock(queues.Queue):
@@ -90,12 +96,6 @@ class OutputQueueMock(queues.Queue):
 # noinspection PyProtectedMember
 class TimeReplay:
     def __init__(self) -> None:
-        replay_params = {
-            'memory_size': 1000,
-            'initial_memory': 1000,  # Wait for the memory buffer to fill before training
-            'batch_size': 512
-        }
-
         self.in_q = InputQueueMock()
         self.out_q = OutputQueueMock(maxsize=0)
         self.log_q = mp.Queue()
@@ -121,9 +121,47 @@ def test_replay_async(test_duration_s):
     tr.terminate(timeout=1.)
 
 
-def test_replay_queue_fill_time():
-    pass
+def push_worker(q: mp.Queue, sleep: float = 0):
+    logger.info(f"tid: {get_tid()} | Push worker started")
+    with open('assets/raw_samples.p', 'rb') as f:
+        samples = pickle.load(f)
+
+    while True:
+        s = random.choice(samples)
+        q.put(s)
+        time.sleep(sleep)
+
+
+def counter_worker(q: mp.Queue, log_q: mp.Queue):
+    logger = get_logger_from_process(log_q)
+
+    timeout = 60.
+    t_start = time.time()
+    counter = 0
+    logger.info(f"tid {get_tid()} | counter started")
+    while time.time() - t_start < timeout:
+        counter += 1
+        q.get()
+        if q.empty():
+            logger.debug("replay_out_queue EMPTY")
+    logger.info(f"{counter} samples pushed in {timeout} seconds")
 
 
 if __name__ == '__main__':
-    test_replay_async(10)
+    mp.set_start_method('forkserver')
+    _ctx = mp.get_context()
+
+    comms = get_communication_objects(1)
+    logger, log_q = get_logger('tmp')
+    replay = Replay(replay_in_queue=comms.replay_in_q, replay_out_queue=comms.replay_out_q, log_queue=log_q,
+                    params=replay_params)
+    count_proc = mp.Process(target=counter_worker, args=(comms.replay_out_q, log_q))
+    push_thread = threading.Thread(target=push_worker, args=(comms.replay_in_q, ), daemon=True)
+
+    push_thread.start()
+    replay.start()
+    count_proc.start()
+
+    count_proc.join(timeout=1000)
+    comms.replay_in_q.put(None)
+    del replay

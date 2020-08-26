@@ -71,6 +71,8 @@ class Replay:
         r"""
         Main thread
         """
+        self.replay_in_queue.put(None)
+        self.replay_out_queue.put(None)
         self.proc.terminate()
         self.proc.join()
 
@@ -127,7 +129,8 @@ class Replay:
     def _sample(self):
         batch = random.choices(self.memory, k=self.batch_size)
         self.replay_out_queue.put(batch)
-        self.logger.debug(f'replay_out_queue {self.replay_out_queue.qsize()}')
+        if self.replay_out_queue.full():
+            self.logger.debug(f'replay_out_queue FULL')
 
     def _wait_for_full_memory(self) -> None:
         """
