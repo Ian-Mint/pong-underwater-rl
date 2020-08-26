@@ -26,7 +26,10 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
 
-sys.path.append(os.path.abspath(os.path.pardir))
+try:
+    import underwater_rl
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.pardir))
 if not ('linux' in sys.platform):
     raise Warning(f"{sys.platform} is not supported")
 

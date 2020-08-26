@@ -5,7 +5,10 @@ import sys
 
 import torch.multiprocessing as mp
 
-sys.path.append(os.path.abspath(os.path.join(os.pardir, os.pardir, os.pardir)))
+try:
+    import underwater_rl
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.join(os.pardir, os.pardir, os.pardir)))
 from underwater_rl.actor import Actor
 from underwater_rl.main import get_communication_objects, initialize_model, get_logger
 

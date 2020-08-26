@@ -16,7 +16,10 @@ import torch.nn as nn
 import torch.optim as optim
 from PIL import Image
 
-sys.path.append(os.path.abspath(os.path.pardir))
+try:
+    import underwater_rl
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.pardir))
 import underwater_rl.actor
 import underwater_rl.common
 import underwater_rl.learner

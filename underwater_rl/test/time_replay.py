@@ -12,7 +12,10 @@ import multiprocessing as mp
 import multiprocessing.queues as queues
 import sys
 
-sys.path.append(os.path.abspath(os.path.join(os.path.pardir, os.path.pardir)))
+try:
+    import underwater_rl
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.join(os.path.pardir, os.path.pardir)))
 from underwater_rl.main import get_communication_objects, get_logger, get_logger_from_process
 from underwater_rl.replay import Replay
 from underwater_rl.common import Transition

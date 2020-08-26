@@ -18,7 +18,10 @@ import torch
 from PIL import Image
 from torch import nn as nn, multiprocessing as mp
 
-sys.path.append(os.path.abspath(os.path.pardir))
+try:
+    import underwater_rl
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.pardir))
 
 from underwater_rl.common import BaseWorker, ParamPipe, Transition, HistoryElement, DEVICE
 from underwater_rl.utils import get_logger_from_process, convert_images_to_video, get_tid

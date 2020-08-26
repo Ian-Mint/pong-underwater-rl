@@ -28,7 +28,10 @@ import sys
 from torch import optim
 import torch.multiprocessing as mp
 
-sys.path.append(os.path.join(os.path.pardir, os.path.pardir))
+try:
+    import underwater_rl
+except ImportError:
+    sys.path.append(os.path.join(os.path.pardir, os.path.pardir))
 
 import underwater_rl.main as rl_main
 import underwater_rl.learner as learn

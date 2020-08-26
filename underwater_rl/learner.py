@@ -15,7 +15,10 @@ from torch import multiprocessing as mp
 from torch.nn import functional as F
 from torchvision import transforms
 
-sys.path.append(os.path.abspath(os.path.pardir))
+try:
+    import underwater_rl
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.pardir))
 from underwater_rl.common import BaseWorker, ParamPipe, Transition
 from underwater_rl.utils import get_logger_from_process, get_tid
 

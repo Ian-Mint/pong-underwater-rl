@@ -7,7 +7,10 @@ from collections import deque
 from typing import Dict, Union
 import sys
 
-sys.path.append(os.path.abspath(os.path.pardir))
+try:
+    import underwater_rl
+except ImportError:
+    sys.path.append(os.path.abspath(os.path.pardir))
 from underwater_rl.utils import get_logger_from_process, get_tid
 
 
