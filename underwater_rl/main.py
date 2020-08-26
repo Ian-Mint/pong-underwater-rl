@@ -40,7 +40,7 @@ from underwater_rl.models import *
 from underwater_rl.utils import *
 from underwater_rl.replay import Replay
 
-N_DECODERS = 2
+N_DECODERS = 8
 
 
 def initialize_model(architecture: str) -> nn.Module:

@@ -284,10 +284,11 @@ class Replay:
             self._sample(counter % n_queues)
 
     def _sample(self, q_idx: int):
+        n_queues = len(self.replay_out_queues)
         q = self.replay_out_queues[q_idx]
         while q.full():
-            q_idx += 1
-            q = self.replay_out_queues[q_idx % len(self.replay_out_queues)]
+            q_idx = (q_idx + 1) % n_queues
+            q = self.replay_out_queues[q_idx]
         batch = random.choices(self.memory, k=self.batch_size)
         q.put(batch)
         if q.full():
