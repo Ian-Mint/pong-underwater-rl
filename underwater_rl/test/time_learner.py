@@ -70,9 +70,9 @@ def main():
 
     logger, log_queue = rl_main.get_logger(LOG_DIR)
     model = rl_main.initialize_model(NETWORK)
-    memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes = rl_main.get_communication_objects(10)
+    memory_queue, replay_in_queue, replay_out_queues, sample_queue, pipes = rl_main.get_communication_objects(10)
     learner = learn.Learner(
-        optimizer=optim.Adam, model=model, replay_out_queue=replay_out_queue, sample_queue=sample_queue,
+        optimizer=optim.Adam, model=model, replay_out_queues=replay_out_queues, sample_queue=sample_queue,
         pipes=pipes, checkpoint_path=os.path.join(LOG_DIR, 'dqn.torch'), log_queue=log_queue,
         learning_params=learning_params, n_decoders=2, run_profile=True
     )
@@ -85,7 +85,7 @@ def main():
     learner.start()
     time.sleep(test_duration + 20)
 
+
 if __name__ == '__main__':
     mp.set_start_method('forkserver')
     main()
-

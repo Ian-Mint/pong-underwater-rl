@@ -40,6 +40,8 @@ from underwater_rl.models import *
 from underwater_rl.utils import *
 from underwater_rl.replay import Replay
 
+N_DECODERS = 2
+
 
 def initialize_model(architecture: str) -> nn.Module:
     r"""
@@ -273,13 +275,13 @@ def train(args, logger, log_queue):
 
     learner = Learner(optimizer=optim.Adam,
                       model=model,
-                      replay_out_queue=comms.replay_out_q,
+                      replay_out_queues=comms.replay_out_q,
                       sample_queue=comms.sample_q,
                       pipes=comms.pipes,
                       checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
                       log_queue=log_queue,
                       learning_params=learning_params,
-                      n_decoders=8)
+                      n_decoders=N_DECODERS)
     replay = Replay(comms.replay_in_q, comms.replay_out_q, log_queue, replay_params)
 
     # Start subprocesses
@@ -324,11 +326,11 @@ def get_communication_objects(n_pipes: int) -> Comms:
     """
     memory_queue = mp.Queue(maxsize=1_000)
     replay_in_queue = mp.Queue(maxsize=1_000)
-    replay_out_queue = mp.Queue(maxsize=1_000)
+    replay_out_queues = [mp.Queue(maxsize=1_000) for _ in range(N_DECODERS)]
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
-    return Comms(memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes)
+    return Comms(memory_queue, replay_in_queue, replay_out_queues, sample_queue, pipes)
 
 
 if __name__ == '__main__':

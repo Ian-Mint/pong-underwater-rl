@@ -189,7 +189,7 @@ class TestActor(unittest.TestCase):
         model = main.initialize_model(main.args.architecture)
         memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects(main.args.actors)
         self.actor = underwater_rl.actor.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
-                                               replay_in_queue=main.replay_out_queue, pipe=None)
+                                               replay_in_queue=main.replay_out_queues, pipe=None)
 
         obs = self.actor.env.reset()
         self.state = underwater_rl.actor.get_state(obs)
@@ -270,7 +270,7 @@ class TestLearner(unittest.TestCase):
 
         model = main.initialize_model(main.args.architecture)
         _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects(main.args.actors)
-        self.learner = underwater_rl.learner.Learner(optimizer=optim.Adam, model=model, replay_out_queue=main.replay_out_queue,
+        self.learner = underwater_rl.learner.Learner(optimizer=optim.Adam, model=model, replay_out_queues=main.replay_out_queues,
                                                      sample_queue=sample_queue, pipes=params_out)
 
     def tearDown(self) -> None:

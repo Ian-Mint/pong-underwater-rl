@@ -85,6 +85,7 @@ class Decoder(BaseWorker):
         self.log_queue = log_queue
         self.replay_out_queue = replay_out_queue
         self.sample_queue = sample_queue
+        self.id = num
 
         self.proc = mp.Process(target=self._main, name=f"MemoryDecoder-{num}", daemon=daemon)
 
@@ -120,7 +121,7 @@ class Decoder(BaseWorker):
         while True:
             batch = self.replay_out_queue.get()
             if self.replay_out_queue.empty():
-                self.logger.debug(f'replay_out_queue EMPTY')
+                self.logger.debug(f'replay_out_queue {self.id} EMPTY')
             if batch is None:  # end the process
                 self.sample_queue.put(None)
                 break
@@ -137,8 +138,7 @@ class Decoder(BaseWorker):
                                              idxs=None, weights=None)
 
             self.sample_queue.put(processed_batch)
-            if self.sample_queue.full():
-                self.logger.debug(f'sample_queue FULL')
+            self.logger.debug(f'sample_queue {self.sample_queue.qsize()}')
 
     def _decode_transition(self, transition: Transition) -> Transition:
         actor_id, step_number, state, action, next_state, reward, done = transition
@@ -275,7 +275,7 @@ class Learner(BaseWorker):
     def __init__(self,
                  optimizer: Callable,
                  model,
-                 replay_out_queue: torch.multiprocessing.Queue,
+                 replay_out_queues: List[torch.multiprocessing.Queue],
                  sample_queue: torch.multiprocessing.Queue,
                  pipes: List[ParamPipe], checkpoint_path: str,
                  log_queue: torch.multiprocessing.Queue,
@@ -288,7 +288,7 @@ class Learner(BaseWorker):
         :param n_decoders: Number of decoder processes to run
         :param optimizer: The selected type of optimizer
         :param model: The initialized model object to be copied into the learner
-        :param replay_out_queue: _sample batches are pulled from this queue for decoding
+        :param replay_out_queues: _sample batches are pulled from this queue for decoding
         :param sample_queue: decoded batches are put on this queue for training
         :param pipes: list of `ParamPipe` objects for communicating with Actors
         :param checkpoint_path: Checkpoint save path
@@ -296,7 +296,7 @@ class Learner(BaseWorker):
         :param learning_params: Parameters to control learning
         :param run_profile: If `True`, run optimizer with cProfile. 
         """
-        self.replay_out_queue = replay_out_queue
+        self.replay_out_queues = replay_out_queues
         self.sample_queue = sample_queue
         self.pipes = pipes
         self.log_queue = log_queue
@@ -347,7 +347,7 @@ class Learner(BaseWorker):
 
     def _terminate(self) -> None:
         """
-        _terminate and _terminate the main process
+        terminate and join the main process
         """
         self.main_proc.terminate()
         self.main_proc.join()
@@ -366,8 +366,8 @@ class Learner(BaseWorker):
         # A started process has a `__weakref__` attribute that is not picklable. So, a started process cannot be passed
         # by context to another process. In this case, only one of the processes can be stored in `self`, and the other
         # process must be started before the `self` process.
-        decoders = [Decoder(self.log_queue, self.replay_out_queue, self.sample_queue, i, daemon=True)
-                    for i in range(self.n_decoder_processes)]
+        decoders = [Decoder(self.log_queue, q, self.sample_queue, i, daemon=True)
+                    for i, q in enumerate(self.replay_out_queues)]
         [d.start() for d in decoders]
 
         self.logger = get_logger_from_process(self.log_queue)

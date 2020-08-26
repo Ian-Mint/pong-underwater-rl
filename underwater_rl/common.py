@@ -23,7 +23,7 @@ class ParamPipe:
 class Comms(NamedTuple):
     memory_q: mp.Queue
     replay_in_q: mp.Queue
-    replay_out_q: mp.Queue
+    replay_out_q: List[mp.Queue]
     sample_q: mp.Queue
     pipes: List[ParamPipe]
 

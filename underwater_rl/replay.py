@@ -1,4 +1,6 @@
 from itertools import count
+import multiprocessing as mp
+from itertools import count
 from multiprocessing.shared_memory import SharedMemory
 import numpy as np
 import os
@@ -163,7 +165,7 @@ class Replay:
 
     def __init__(self,
                  replay_in_queue: mp.Queue,
-                 replay_out_queue: mp.Queue,
+                 replay_out_queues: List[mp.Queue],
                  log_queue: mp.Queue,
                  params: Dict[str, Union[int, float]],
                  mode: str = 'default'):
@@ -171,7 +173,7 @@ class Replay:
         Stores and samples the replay memory.
 
         :param replay_in_queue: The queue used to retrieve samples
-        :param replay_out_queue: The queue used to push samples
+        :param replay_out_queues: List of queues for pushing samples. One queue for each decoder
         :param params: parameters controlling the replay memory behavior (length, etc.)
         :param mode: {'default', 'episodic'}
         """
@@ -185,7 +187,7 @@ class Replay:
             "Initial replay memory set lower than total replay memory"
 
         self.replay_in_queue = replay_in_queue
-        self.replay_out_queue = replay_out_queue
+        self.replay_out_queues = replay_out_queues
         self.log_queue = log_queue
         self.mode = mode
 
@@ -215,7 +217,7 @@ class Replay:
         """
         try:
             self.replay_in_queue.put(None, timeout=1)
-            self.replay_out_queue.put(None, timeout=1)
+            [q.put(None, timeout=1) for q in self.replay_out_queues]
         except (Full, Empty):
             pass
         self._main_proc.terminate()
@@ -277,14 +279,16 @@ class Replay:
         self.logger.info(f"tid: {get_tid()} | Replay memory sample worker started")
         self._wait_for_full_memory()
 
-        while True:
-            self._sample()
+        n_queues = len(self.replay_out_queues)
+        for counter in count():
+            self._sample(counter % n_queues)
 
-    def _sample(self):
+    def _sample(self, q_idx: int):
+        q = self.replay_out_queues[q_idx]
         batch = random.choices(self.memory, k=self.batch_size)
-        self.replay_out_queue.put(batch)
-        if self.replay_out_queue.full():
-            self.logger.debug(f'replay_out_queue FULL')
+        q.put(batch)
+        if q.full():
+            self.logger.debug(f'replay_out_queue {q_idx} FULL')
 
     def _wait_for_full_memory(self) -> None:
         """
