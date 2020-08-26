@@ -9,7 +9,7 @@ except ImportError:
     from torch.utils.model_zoo import load_url as load_state_dict_from_url
 
 __all__ = ['DQNbn', 'DQN', 'DuelingDQN', 'softDQN', 'DistributionalDQN', 'ResNet', 'resnet18', 'resnet10', 'resnet12',
-           'resnet14', 'PolicyGradient', 'NoisyDQN', 'Actor', 'Critic', 'DRQN']
+           'resnet14', 'PolicyGradient', 'NoisyDQN', 'Actor', 'Critic', 'DRQN', 'AttentionDQN']
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 
@@ -206,6 +206,56 @@ class DuelingDQN(nn.Module):
         x = F.relu(self.conv3(x))
 
         action_fc = F.relu(self.action_fc(x.reshape(x.size(0), -1)))
+        action_value = self.action_value(action_fc)
+
+        state_value_fc = F.relu(self.state_value_fc(x.reshape(x.size(0), -1)))
+        state_value = self.state_value(state_value_fc)
+
+        action_value_mean = torch.mean(action_value, dim=1, keepdim=True)
+        action_value_center = action_value - action_value_mean
+
+        action_value_out = state_value + action_value_center
+
+        return action_value_out
+
+class AttentionDQN(nn.Module):
+    def __init__(self, in_channels=4, n_actions=14, **kwargs):
+        """
+        Initialize Deep Q Network
+
+        Args:
+            in_channels (int): number of input channels
+            n_actions (int): number of outputs
+        """
+        super(AttentionDQN, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(64, 256, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(256, 512, kernel_size=3, stride=1)
+
+        self.encoder_att = nn.Linear(49, 21)
+        self.full_att = nn.Linear(21, 1)
+        self.relu = nn.ReLU()
+        self.softmax = nn.Softmax(dim=1)
+
+        self.action_fc = nn.Linear(512 * 7 * 7, 512)
+        self.state_value_fc = nn.Linear(64 * 7 * 7, 512)
+        self.action_value = nn.Linear(512, n_actions)
+        self.state_value = nn.Linear(512, 1)
+        # self.head = nn.Linear(512, n_actions)
+
+    def forward(self, x):
+        x = x.float() / 255
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+
+        encoder_out = x.reshape(x.size(0), x.size(1), -1)
+        att1 = self.encoder_att(encoder_out)
+        att = self.full_att(self.relu(att1)).squeeze(2)
+        alpha = self.softmax(att)
+        attention_weighted_encoding = (encoder_out * alpha.unsqueeze(2)).sum(dim=1)
+
+        action_fc = F.relu(self.action_fc(attention_weighted_encoding.reshape(x.size(0), -1)))
         action_value = self.action_value(action_fc)
 
         state_value_fc = F.relu(self.state_value_fc(x.reshape(x.size(0), -1)))

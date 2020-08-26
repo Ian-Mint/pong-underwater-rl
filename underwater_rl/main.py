@@ -82,7 +82,7 @@ def get_epsilon(epoch, steps_done):
 def select_noisy_action(state):
     with torch.no_grad():
         return policy_net(state.to(device)).max(1)[1]
-    
+
 
 def select_soft_action(state):
     with torch.no_grad():
@@ -174,7 +174,7 @@ def optimize_predict():
 
     loss = get_loss(state_action_values, expected_state_action_values, idxs, weights)
     step_optimizer(loss)
-    
+
 
 def forward_policy(action_batch, state_batch):
     return policy_net(state_batch).gather(1, action_batch)
@@ -251,7 +251,7 @@ def main_training_loop(n_episodes, render_mode=False):
     """
     global epoch
     save_dir = os.path.join(args.store_dir, 'video')
-    
+
     if args.train_prediction:
         train_pong.initial(args.store_dir, logger=logger)
     for episode in range(1, n_episodes + 1):
@@ -420,7 +420,7 @@ def dispatch_render(env, mode, save_dir):
 def train_prediction():
     train_loader = train_pong.train_dataloader(replay=memory)
     training_loss = train_pong.training(dataloader=train_loader, store_dir=args.store_dir, learning_rate=LR, logger=logger)
-    
+
 def test_prediction():
     test_loader = train_pong.test_dataloader(replay=memory)
     training_loss = train_pong.testing(dataloader=test_loader, store_dir=args.store_dir)
@@ -507,6 +507,10 @@ def get_models(architecture, n_actions):
     elif architecture == 'dueling_dqn':
         policy_net = DuelingDQN(n_actions=n_actions).to(device)
         target_net = DuelingDQN(n_actions=n_actions).to(device)
+        target_net.load_state_dict(policy_net.state_dict())
+    elif architecture == 'attention_dqn':
+        policy_net = AttentionDQN(n_actions=n_actions).to(device)
+        target_net = AttentionDQN(n_actions=n_actions).to(device)
         target_net.load_state_dict(policy_net.state_dict())
     elif architecture == 'lstm':
         policy_net = DRQN(n_actions=n_actions).to(device)
@@ -664,7 +668,7 @@ def get_parser():
                          help='train prediction(default: False)')
     rl_args.add_argument('--pred-episode', dest='pred_episode', default=1000, type=int,
                          help="when to start training prediction model")
-    
+
     '''resume args'''
     resume_args = parser.add_argument_group("Resume", "Store experiments / Resume training")
     resume_args.add_argument('--resume', dest='resume', action='store_true',
