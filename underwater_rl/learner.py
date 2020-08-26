@@ -6,6 +6,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from itertools import count
 from typing import Callable, List, Dict, Union, Tuple
+import sys
 
 import numpy as np
 import torch
@@ -14,12 +15,9 @@ from torch import multiprocessing as mp
 from torch.nn import functional as F
 from torchvision import transforms
 
-try:
-    from underwater_rl.base import BaseWorker, ParamPipe, Transition
-    from underwater_rl.utils import get_logger_from_process, get_tid
-except ImportError:
-    from base import BaseWorker, ParamPipe, Transition
-    from utils import get_logger_from_process, get_tid
+sys.path.append(os.path.abspath(os.path.pardir))
+from underwater_rl.common import BaseWorker, ParamPipe, Transition
+from underwater_rl.utils import get_logger_from_process, get_tid
 
 
 CHECKPOINT_INTERVAL = 1  # number of batches between storing a checkpoint

@@ -10,6 +10,7 @@ import time
 from copy import deepcopy
 from itertools import count
 from typing import Union, Dict, Tuple, List
+import sys
 
 import gym
 import numpy as np
@@ -17,14 +18,11 @@ import torch
 from PIL import Image
 from torch import nn as nn, multiprocessing as mp
 
-try:
-    from underwater_rl.base import BaseWorker, ParamPipe, Transition, HistoryElement, DEVICE
-    from underwater_rl.utils import get_logger_from_process, convert_images_to_video, get_tid
-    from underwater_rl.wrappers import LazyFrames, make_env
-except ImportError:
-    from base import BaseWorker, ParamPipe, Transition, HistoryElement, DEVICE
-    from utils import get_logger_from_process, convert_images_to_video, get_tid
-    from wrappers import LazyFrames, make_env
+sys.path.append(os.path.abspath(os.path.pardir))
+
+from underwater_rl.common import BaseWorker, ParamPipe, Transition, HistoryElement, DEVICE
+from underwater_rl.utils import get_logger_from_process, convert_images_to_video, get_tid
+from underwater_rl.wrappers import LazyFrames, make_env
 
 
 MAX_STEPS_PER_EPISODE = 50_000

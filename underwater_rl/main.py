@@ -26,26 +26,16 @@ import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
 
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+sys.path.append(os.path.abspath(os.path.pardir))
 if not ('linux' in sys.platform):
     raise Warning(f"{sys.platform} is not supported")
 
-try:
-    from .actor import Actor, ActorTest, N_ACTIONS
-    from .base import ParamPipe, DEVICE
-    from .learner import Learner
-    from .models import *
-    from .wrappers import *
-    from .utils import *
-    from .replay import Replay
-except ImportError:
-    from actor import Actor, ActorTest, N_ACTIONS
-    from base import ParamPipe, DEVICE
-    from learner import Learner
-    from models import *
-    from wrappers import *
-    from utils import *
-    from replay import Replay
+from underwater_rl.actor import Actor, ActorTest, N_ACTIONS
+from underwater_rl.common import ParamPipe, DEVICE, Comms
+from underwater_rl.learner import Learner
+from underwater_rl.models import *
+from underwater_rl.utils import *
+from underwater_rl.replay import Replay
 
 
 def initialize_model(architecture: str) -> nn.Module:
@@ -262,26 +252,32 @@ def train(args, logger, log_queue):
 
     # Get shared objects
     model = initialize_model(args.network)
-    memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes = get_communication_objects(args.n_actors)
+    comms = get_communication_objects(args.n_actors)
 
     # Create subprocesses
     actors = []
-    for p in pipes:
+    for p in comms.pipes:
         a = Actor(model=model,
                   n_episodes=args.episodes,
                   render_mode=args.render,
-                  memory_queue=memory_queue,
-                  replay_in_queue=replay_in_queue,
+                  memory_queue=comms.memory_q,
+                  replay_in_queue=comms.replay_in_q,
                   pipe=p,
                   global_args=args,
                   log_queue=log_queue,
                   actor_params=actor_params)
         actors.append(a)
 
-    learner = Learner(optimizer=optim.Adam, model=model, replay_out_queue=replay_out_queue, sample_queue=sample_queue,
-                      pipes=pipes, checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'), log_queue=log_queue,
-                      learning_params=learning_params, n_decoders=2)
-    replay = Replay(replay_in_queue, replay_out_queue, log_queue, replay_params)
+    learner = Learner(optimizer=optim.Adam,
+                      model=model,
+                      replay_out_queue=comms.replay_out_q,
+                      sample_queue=comms.sample_q,
+                      pipes=comms.pipes,
+                      checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
+                      log_queue=log_queue,
+                      learning_params=learning_params,
+                      n_decoders=2)
+    replay = Replay(comms.replay_in_q, comms.replay_out_q, log_queue, replay_params)
 
     # Start subprocesses
     run_all(actors, 'start')
@@ -316,7 +312,7 @@ def run_all(actors: Iterable[Actor], method: str, *args, **kwargs) -> None:
         a.__getattribute__(method)(*args, **kwargs)
 
 
-def get_communication_objects(n_pipes: int) -> Tuple[mp.Queue, mp.Queue, mp.Queue, mp.Queue, List[ParamPipe]]:
+def get_communication_objects(n_pipes: int) -> Comms:
     r"""
     Return the various queues and pipes used to communicate between processes
 
@@ -329,7 +325,7 @@ def get_communication_objects(n_pipes: int) -> Tuple[mp.Queue, mp.Queue, mp.Queu
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
-    return memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes
+    return Comms(memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes)
 
 
 if __name__ == '__main__':

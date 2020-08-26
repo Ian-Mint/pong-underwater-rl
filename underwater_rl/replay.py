@@ -1,14 +1,14 @@
 import multiprocessing as mp
+import os
 import random
 import threading
 import time
 from collections import deque
 from typing import Dict, Union
+import sys
 
-try:
-    from .utils import get_logger_from_process, get_tid
-except ImportError:
-    from utils import get_logger_from_process, get_tid
+sys.path.append(os.path.abspath(os.path.pardir))
+from underwater_rl.utils import get_logger_from_process, get_tid
 
 
 class Replay:
