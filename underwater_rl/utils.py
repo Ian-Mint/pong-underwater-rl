@@ -29,7 +29,11 @@ def get_tid():
     return threading.get_native_id()
 
 
-def get_logger(store_dir) -> Tuple[logging.Logger, mp.Queue]:
+def get_logger(store_dir, mode='a') -> Tuple[logging.Logger, mp.Queue]:
+    """
+    :param store_dir: Sets the directory where the log files are stored. Directory must alread exist
+    :param mode: Sets the write mode. 'a' for append, 'w' to overwrite.
+    """
     def log_worker(q):
         while True:
             record = q.get()
@@ -60,14 +64,14 @@ def get_logger(store_dir) -> Tuple[logging.Logger, mp.Queue]:
             'info': {
                 'class': 'logging.FileHandler',
                 'filename': base_log_path,
-                'mode': 'a',
+                'mode': mode,
                 'formatter': 'basic',
                 'level': 'INFO',
             },
             'debug': {
                 'class': 'logging.FileHandler',
                 'filename': debug_log_path,
-                'mode': 'a',
+                'mode': mode,
                 'formatter': 'detailed',
                 'level': 'DEBUG',
             },

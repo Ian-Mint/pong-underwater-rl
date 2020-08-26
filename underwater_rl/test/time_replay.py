@@ -155,16 +155,16 @@ if __name__ == '__main__':
     _ctx = mp.get_context()
 
     comms = get_communication_objects(1)
-    logger, log_q = get_logger('tmp')
+    logger, log_q = get_logger('tmp', mode='w')
     replay = Replay(replay_in_queue=comms.replay_in_q, replay_out_queue=comms.replay_out_q, log_queue=log_q,
                     params=replay_params)
-    count_proc = mp.Process(target=counter_worker, args=(comms.replay_out_q, log_q))
+    count_procs = [mp.Process(target=counter_worker, args=(comms.replay_out_q, log_q)) for _ in range(4)]
     push_thread = threading.Thread(target=push_worker, args=(comms.replay_in_q, ), daemon=True)
 
     push_thread.start()
     replay.start()
-    count_proc.start()
+    [p.start() for p in count_procs]
 
-    count_proc.join(timeout=1000)
+    [p.join() for p in count_procs]
     comms.replay_in_q.put(None)
     del replay

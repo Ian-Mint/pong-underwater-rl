@@ -1,5 +1,6 @@
 import multiprocessing as mp
 import os
+from queue import Full, Empty
 import random
 import threading
 import time
@@ -74,8 +75,11 @@ class Replay:
         r"""
         Main thread
         """
-        self.replay_in_queue.put(None)
-        self.replay_out_queue.put(None)
+        try:
+            self.replay_in_queue.put(None, timeout=1)
+            self.replay_out_queue.put(None, timeout=1)
+        except (Full, Empty):
+            pass
         self.proc.terminate()
         self.proc.join()
 
