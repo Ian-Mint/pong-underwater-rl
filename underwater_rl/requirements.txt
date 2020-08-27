@@ -1,5 +1,0 @@
-python=3.6
-torch
-torchvision
-opencv-python
-gym-dynamic-pong

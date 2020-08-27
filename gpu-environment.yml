@@ -19,5 +19,6 @@ dependencies:
   - flask-caching
   - yaml
   - gym
+  - cython
 
 

@@ -15,4 +15,4 @@ underwater_rl/test/tmp
 underwater_rl/*.html
 underwater_rl/*.c
 underwater_rl/*.so
-underwater_rl/build
+build

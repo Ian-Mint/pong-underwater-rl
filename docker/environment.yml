@@ -14,9 +14,7 @@ dependencies:
   - opencv
   - pandas
   - matplotlib
-  - dash
-  - dash-bootstrap-components
-  - flask-caching
+  - cython
   - yaml
   - gym
   - flake8

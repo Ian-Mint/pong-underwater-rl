@@ -33,6 +33,7 @@ spec:
           cd pong-underwater-rl;
           git checkout -b {job_name};
           pip install --no-deps -e gym-dynamic-pong;
+          python underwater_rl/setup.py build_ext --inplace;
           cd underwater_rl;
           python main.py {options};
           git config --global user.name {user};

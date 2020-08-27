@@ -50,6 +50,7 @@ With one replay_out_queue per decoder
 8 decoders:
 - 100 samples in 5-6 seconds
 - replay_out_queue does not fill
+- Marginal improvement when number of memory locks increased from 10k to 20k
 
 4 decoders:
 - 100 samples in 6-7 seconds
