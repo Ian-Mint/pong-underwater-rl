@@ -156,8 +156,7 @@ if __name__ == '__main__':
 
     comms = get_communication_objects(1)
     logger, log_q = get_logger('tmp', mode='w')
-    replay = Replay(replay_in_queue=comms.replay_in_q, replay_out_queue=comms.replay_out_q, log_queue=log_q,
-                    params=replay_params)
+    replay = Replay(replay_in_queue=comms.replay_in_q, replay_out_queues=, log_queue=log_q, params=replay_params)
     count_procs = [mp.Process(target=counter_worker, args=(comms.replay_out_q, log_q)) for _ in range(4)]
     push_thread = threading.Thread(target=push_worker, args=(comms.replay_in_q, ), daemon=True)
 
