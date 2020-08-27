@@ -279,7 +279,7 @@ def train(args, logger, log_queue):
                       checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
                       log_queue=log_queue,
                       learning_params=learning_params,
-                      n_decoders=2)
+                      n_decoders=8)
     replay = Replay(comms.replay_in_q, comms.replay_out_q, log_queue, replay_params)
 
     # Start subprocesses

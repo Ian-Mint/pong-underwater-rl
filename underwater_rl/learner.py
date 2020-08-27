@@ -119,7 +119,8 @@ class Decoder(BaseWorker):
 
         while True:
             batch = self.replay_out_queue.get()
-            self.logger.debug(f'replay_out_queue {self.replay_out_queue.qsize()}')
+            if self.replay_out_queue.empty():
+                self.logger.debug(f'replay_out_queue EMPTY')
             if batch is None:  # end the process
                 self.sample_queue.put(None)
                 break
