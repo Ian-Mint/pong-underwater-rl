@@ -138,8 +138,6 @@ class Decoder(BaseWorker):
                                              idxs=None, weights=None)
 
             self.sample_queue.put(processed_batch)
-            if self.sample_queue.full():
-                self.logger.debug(f'sample_queue FULL')
 
     def _decode_transition(self, transition: Transition) -> Transition:
         actor_id, step_number, state, action, next_state, reward, done = transition

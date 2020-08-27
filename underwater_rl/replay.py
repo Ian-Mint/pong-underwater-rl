@@ -254,9 +254,6 @@ class Replay:
         sample = self.replay_in_queue.get()
         if sample is None:
             return False
-        else:
-            if self.replay_in_queue.empty():
-                self.logger.debug(f'replay_in_queue EMPTY')
 
         self.buffer_in.append(sample)
         if len(self.buffer_in) >= buffer_len:

@@ -490,9 +490,6 @@ class Encoder(BaseWorker):
             actor_id, step_number, state, action, next_state, reward, done = transition
             del transition
 
-            if self.memory_queue.empty():
-                self.logger.debug(f'memory_queue EMPTY')
-
             self._check_inputs(action, next_state, reward, state)
             next_state, state = self._process_states(next_state, state)
 
