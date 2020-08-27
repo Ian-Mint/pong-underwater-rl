@@ -55,7 +55,7 @@ With one replay_out_queue per decoder
 - 100 samples in 6-7 seconds
 - replay_out_queue oscillates
 """
-N_DECODERS = 8
+N_DECODERS = 4
 
 
 def initialize_model(architecture: str) -> nn.Module:
