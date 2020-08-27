@@ -293,8 +293,8 @@ def train_episode(episode, render_mode, save_dir):
 
 def save_episode(episode, t, total_reward):
     history.append((total_reward, t))
-    #if episode % CHECKPOINT_INTERVAL == 0:
-        #save_checkpoint(args.store_dir)
+    if episode % CHECKPOINT_INTERVAL == 0:
+        save_checkpoint(args.store_dir)
 
 
 def log_episode(episode, t):
