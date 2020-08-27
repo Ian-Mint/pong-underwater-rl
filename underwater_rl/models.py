@@ -228,20 +228,19 @@ class AttentionDQN(nn.Module):
             n_actions (int): number of outputs
         """
         super(AttentionDQN, self).__init__()
-        self.conv1 = nn.Conv2d(in_channels, 64, kernel_size=8, stride=4)
-        self.conv2 = nn.Conv2d(64, 256, kernel_size=4, stride=2)
-        self.conv3 = nn.Conv2d(256, 512, kernel_size=3, stride=1)
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
 
         self.encoder_att = nn.Linear(49, 21)
         self.full_att = nn.Linear(21, 1)
         self.relu = nn.ReLU()
         self.softmax = nn.Softmax(dim=1)
 
-        self.action_fc = nn.Linear(512 * 7 * 7, 512)
+        self.action_fc = nn.Linear(49, 21)
         self.state_value_fc = nn.Linear(64 * 7 * 7, 512)
-        self.action_value = nn.Linear(512, n_actions)
-        self.state_value = nn.Linear(512, 1)
-        # self.head = nn.Linear(512, n_actions)
+        self.action_value = nn.Linear(21, n_actions)
+        self.state_value = nn.Linear(512, n_actions)
 
     def forward(self, x):
         x = x.float() / 255

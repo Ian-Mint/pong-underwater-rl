@@ -293,8 +293,8 @@ def train_episode(episode, render_mode, save_dir):
 
 def save_episode(episode, t, total_reward):
     history.append((total_reward, t))
-    if episode % CHECKPOINT_INTERVAL == 0:
-        save_checkpoint(args.store_dir)
+    #if episode % CHECKPOINT_INTERVAL == 0:
+        #save_checkpoint(args.store_dir)
 
 
 def log_episode(episode, t):
@@ -640,7 +640,7 @@ def get_parser():
                          help='learning rate (default: 1e-4)')
     rl_args.add_argument('--network', default='dqn_pong_model',
                          choices=['dqn_pong_model', 'soft_dqn', 'dueling_dqn', 'resnet18', 'resnet10', 'resnet12',
-                                  'resnet14', 'noisy_dqn', 'predict_dqn', 'lstm', 'distribution_dqn'],
+                                  'resnet14', 'noisy_dqn', 'predict_dqn', 'lstm', 'distribution_dqn', 'attention_dqn'],
                          help='choose a network architecture (default: dqn_pong_model)')
     rl_args.add_argument('--double', default=False, action='store_true',
                          help='switch for double dqn (default: False)')
