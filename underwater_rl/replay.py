@@ -36,7 +36,7 @@ class Memory:
         self._length = length
         self._shared_memory = SharedMemory(create=True, size=self.stride * length)
 
-        _n_locks = 20_000
+        _n_locks = 1_000
         self._locks = [mp.Lock() for _ in range(_n_locks)]
         self._lock_length = length // _n_locks
         assert self._lock_length == length / _n_locks, "length must be divisible by _n_locks"
