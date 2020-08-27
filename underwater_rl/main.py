@@ -19,7 +19,7 @@ import argparse
 import os
 import sys
 import time
-from typing import List, Tuple, Iterable
+from typing import Iterable
 
 import torch
 import torch.multiprocessing as mp

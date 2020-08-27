@@ -1,17 +1,13 @@
-from itertools import count
-import multiprocessing as mp
+import os
+import random
+import sys
+import time
 from itertools import count
 from multiprocessing.shared_memory import SharedMemory
-import numpy as np
-import os
 from queue import Full, Empty
-import random
-import threading
-import time
-from collections import deque
 from typing import Dict, Union, List
-import sys
 
+import numpy as np
 import torch.multiprocessing as mp
 
 try:
