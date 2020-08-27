@@ -22,6 +22,10 @@ class Memory:
     """
     A shared memory utility class
     """
+    # n_bytes:
+    #   2 4x84x84 uint8 arrays
+    #   4 32-bit (4-byte) numbers
+    #   1 bool (1-byte)
     int_size = 4
     array_dtype = 'uint8'
     array_bytes = 4 * 84 * 84
@@ -30,16 +34,13 @@ class Memory:
     _offset = 0
 
     def __init__(self, length: int):
-        # n_bytes:
-        #   2 4x84x84 uint8 arrays
-        #   4 32-bit (4-byte) numbers
-        #   1 bool (1-byte)
         self._length = length
         self._shared_memory = SharedMemory(create=True, size=self.stride * length)
 
-        _n_locks = 10_000
+        _n_locks = 20_000
         self._locks = [mp.Lock() for _ in range(_n_locks)]
         self._lock_length = length // _n_locks
+        assert self._lock_length == length / _n_locks, "length must be divisible by _n_locks"
 
     def __del__(self):
         self._shared_memory.unlink()

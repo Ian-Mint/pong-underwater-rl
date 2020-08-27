@@ -40,6 +40,21 @@ from underwater_rl.models import *
 from underwater_rl.utils import *
 from underwater_rl.replay import Replay
 
+
+"""
+With one replay_out_queue per decoder
+16 decoders:
+- 100 samples in 8-10 seconds
+- replay_out_queue does not fill
+
+8 decoders:
+- 100 samples in 5-6 seconds
+- replay_out_queue does not fill
+
+4 decoders:
+- 100 samples in 6-7 seconds
+- replay_out_queue oscillates
+"""
 N_DECODERS = 8
 
 
