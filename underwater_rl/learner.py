@@ -23,8 +23,8 @@ from underwater_rl.common import BaseWorker, ParamPipe, Transition
 from underwater_rl.utils import get_logger_from_process, get_tid
 
 
-CHECKPOINT_INTERVAL = 1  # number of batches between storing a checkpoint
-TARGET_UPDATE_INTERVAL = 1  # number of batches between updating the target network
+CHECKPOINT_INTERVAL = 100  # number of batches between storing a checkpoint
+TARGET_UPDATE_INTERVAL = 100  # number of batches between updating the target network
 
 
 class ProcessedBatch:
@@ -138,7 +138,8 @@ class Decoder(BaseWorker):
                                              idxs=None, weights=None)
 
             self.sample_queue.put(processed_batch)
-            self.logger.debug(f'sample_queue {self.sample_queue.qsize()}')
+            if self.sample_queue.full():
+                self.logger.debug(f'sample_queue FULL')
 
     def _decode_transition(self, transition: Transition) -> Transition:
         actor_id, step_number, state, action, next_state, reward, done = transition
@@ -401,6 +402,7 @@ class Learner(BaseWorker):
         """
         Main training loop
         """
+        interval_start_time = time.time()
         for self.epoch in count(1):
             batch = self._sample()
             if batch is None:
@@ -409,6 +411,8 @@ class Learner(BaseWorker):
             self._optimize_model(batch)
             if self.epoch % TARGET_UPDATE_INTERVAL == 0:
                 self._update_target_net()
+                self.logger.debug(f"{TARGET_UPDATE_INTERVAL} batches in {time.time() - interval_start_time} seconds")
+                interval_start_time = time.time()
             if self.epoch % CHECKPOINT_INTERVAL == 0:
                 self._save_checkpoint()
 
@@ -457,7 +461,6 @@ class Learner(BaseWorker):
         expected_state_action_values = (next_state_values * self.gamma) + batch.rewards.float()
 
         loss = self._get_loss(state_action_values, expected_state_action_values)
-        self.logger.debug(f"loss norm: {loss.norm()}")
         self._step_optimizer(loss)
 
     def _sample(self) -> ProcessedBatch:
