@@ -55,7 +55,7 @@ With one replay_out_queue per decoder
 - 100 samples in 6-7 seconds
 - replay_out_queue oscillates
 """
-N_DECODERS = 16
+N_SAMPLERS = 8  # number of memory sampling processes
 
 
 def initialize_model(architecture: str) -> nn.Module:
@@ -296,7 +296,7 @@ def train(args, logger, log_queue):
                       checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
                       log_queue=log_queue,
                       learning_params=learning_params,
-                      n_decoders=N_DECODERS)
+                      n_decoders=N_SAMPLERS)
     replay = Replay(comms.replay_in_q, comms.replay_out_q, log_queue, replay_params)
 
     # Start subprocesses
@@ -341,7 +341,7 @@ def get_communication_objects(n_pipes: int) -> Comms:
     """
     memory_queue = mp.Queue(maxsize=1_000)
     replay_in_queue = mp.Queue(maxsize=1_000)
-    replay_out_queues = [mp.Queue(maxsize=1_000) for _ in range(N_DECODERS)]
+    replay_out_queues = [mp.Queue(maxsize=1_000) for _ in range(N_SAMPLERS)]
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
