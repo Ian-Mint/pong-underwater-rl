@@ -2,6 +2,7 @@ import os
 import random
 import sys
 import time
+from itertools import count
 from multiprocessing.shared_memory import SharedMemory
 from queue import Full, Empty
 from typing import Dict, Union, List
@@ -192,10 +193,8 @@ class Replay:
         self.log_queue = log_queue
         self.mode = mode
 
-        self.buffer_in = []
         self.memory = Memory(self.memory_maxlen)
         self.memory_length = mp.Value('i', 0)
-        self.sample_count = 0
 
         self.logger = None
         self.memory_full_event = mp.Event()
@@ -250,26 +249,13 @@ class Replay:
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.info(f"tid: {get_tid()} | Replay memory push worker started")
 
-        is_running = True
-        while is_running:
-            is_running = self._push()
-
-    def _push(self):
-        buffer_len = 1000
-        sample = self.replay_in_queue.get()
-        if sample is None:
-            return False
-
-        self.buffer_in.append(sample)
-        if len(self.buffer_in) >= buffer_len:
-            index = self.sample_count % self.memory_maxlen
-            self.memory[index: index + buffer_len] = self.buffer_in
-
-            self.sample_count += buffer_len
-            if not self.memory_full_event.is_set() and self.sample_count >= self.initial_memory:
+        for sample_count in count():
+            sample = self.replay_in_queue.get()
+            if sample is None:
+                break
+            self.memory[sample_count % self.memory_maxlen] = sample
+            if not self.memory_full_event.is_set() and sample_count >= self.initial_memory:
                 self.memory_full_event.set()
-            self.buffer_in = []
-        return True
 
     def _sample_worker(self, q: mp.Queue) -> None:
         r"""
