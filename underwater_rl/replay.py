@@ -60,9 +60,12 @@ class Memory:
             raise IndexError
 
     def _get_slice(self, slice_: slice):
+        start = slice_.start if slice_.start is not None else 0
+        step = slice_.step if slice_.step is not None else 1
+        stop = slice_.stop if slice_.stop is not None else self._length
         if slice_.stop > self._length:
             raise IndexError
-        return [self._get_item(i % self._length) for i in range(slice_.start, slice_.stop, slice_.step)]
+        return [self._get_item(i % self._length) for i in range(start, stop, step)]
 
     # todo: use __get_slice__ and __set_slice__
     def _get_item(self, index):
@@ -111,8 +114,10 @@ class Memory:
             raise IndexError
 
     def _set_slice(self, slice_: slice, transitions: List[Transition]):
+        start = slice_.start if slice_.start is not None else 0
         step = slice_.step if slice_.step is not None else 1
-        for i, t in zip(range(slice_.start, slice_.stop, step), transitions):
+        stop = slice_.stop if slice_.stop is not None else self._length
+        for i, t in zip(range(start, stop, step), transitions):
             self._set_item(i % self._length, t)
 
     def _set_item(self, index, transition):
