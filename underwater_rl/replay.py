@@ -2,12 +2,11 @@ import os
 import random
 import sys
 import time
-from multiprocessing.shared_memory import SharedMemory
 from queue import Full, Empty
 from typing import Dict, Union, List
 
-import numpy as np
 import torch.multiprocessing as mp
+from torch.multiprocessing import Manager
 
 try:
     import underwater_rl
@@ -18,135 +17,41 @@ from underwater_rl.common import Transition
 
 
 class Memory:
-    """
-    A shared memory utility class
-    """
-    # n_bytes:
-    #   2 4x84x84 uint8 arrays
-    #   4 32-bit (4-byte) numbers
-    #   1 bool (1-byte)
-    int_size = 4
-    array_dtype = 'uint8'
-    array_bytes = 4 * 84 * 84
-    array_shape = (4, 84, 84)
-    stride = 2 * array_bytes + 4 * int_size + 1
     _offset = 0
 
-    def __init__(self, length: int):
+    def __init__(self, length: int, dest=None):
         self._length = length
-        self._shared_memory = SharedMemory(create=True, size=self.stride * length)
-
-        _n_locks = 1_000
-        self._locks = [mp.Lock() for _ in range(_n_locks)]
-        self._lock_length = length // _n_locks
-        assert self._lock_length == length / _n_locks, "length must be divisible by _n_locks"
-
-    def __del__(self):
-        self._shared_memory.unlink()
-
-    @property
-    def _buf(self):
-        return self._shared_memory.buf
+        init = [None] * length
+        if dest is None:
+            self._memory = init
+        else:
+            self._memory = dest
+            if len(dest) == 0:
+                self._memory.extend(init)
+            else:
+                assert len(dest) == length, "dest must be empty or equal to length"
 
     def __len__(self):
         return self._length
 
     def __getitem__(self, index: Union[slice, int]):
-        if isinstance(index, int):
-            return self._get_item(index)
-        elif isinstance(index, slice):
-            return self._get_slice(index)
-        else:
-            raise IndexError
+        return self._memory[index]
 
-    def _get_slice(self, slice_: slice):
-        if slice_.stop > self._length:
-            raise IndexError
-        return [self._get_item(i % self._length) for i in range(slice_.start, slice_.stop, slice_.step)]
+    def __get_slice__(self, slice_: slice):
+        return [self[i % self._length] for i in range(slice_.start, slice_.stop, slice_.step)]
 
-    # todo: use __get_slice__ and __set_slice__
-    def _get_item(self, index):
-        if index < 0 or index > self._length:
-            raise IndexError(f"index {index} out of bounds")
+    def put(self, transition):
+        assert isinstance(transition, Transition)
+        self._memory[self._offset] = transition
+        self._offset = (self._offset + 1) % self._length
 
-        with self._locks[index // self._lock_length]:
-            self._offset = index * self.stride
-
-            actor_id = int.from_bytes(self._get(self.int_size), 'big')
-            step_number = int.from_bytes(self._get(self.int_size), 'big')
-            state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape)
-            action = int.from_bytes(self._get(self.int_size), 'big')
-            next_state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape)
-            reward = int.from_bytes(self._get(self.int_size), 'big', signed=True)
-            done = int.from_bytes(self._get(1), 'big')
-            if done:
-                next_state = None
-            return Transition(actor_id, step_number, state, action, next_state, reward, done)
-
-    def _get(self, n_bytes: int) -> memoryview:
-        """
-        Get item at `_offset` and move forward `n_bytes`
-
-        :param n_bytes: Number of bytes to retrieve from memory
-        :return: bytearray
-        """
-        item = self._buf[self._offset: self._offset + n_bytes]
-        self._offset += n_bytes
-        return item
-
-    def __setitem__(self, index: Union[int, slice], transition: Union[List[Transition], Transition]):
-        """
-        Store `transition` in shared memory
-
-        :param index: Index of the memory location to store
-        :param transition: a `Transition`
-        """
-        if isinstance(index, int):
-            assert isinstance(transition, Transition)
-            self._set_item(index, transition)
-        elif isinstance(index, slice):
-            assert isinstance(transition, List)
-            self._set_slice(index, transition)
-        else:
-            raise IndexError
-
-    def _set_slice(self, slice_: slice, transitions: List[Transition]):
-        step = slice_.step if slice_.step is not None else 1
-        for i, t in zip(range(slice_.start, slice_.stop, step), transitions):
-            self._set_item(i % self._length, t)
-
-    def _set_item(self, index, transition):
-        if index < 0 or index > self._length:
-            raise IndexError(f"index {index} out of bounds")
-
-        with self._locks[index // self._lock_length]:
-            self._offset = index * self.stride
-
-            # 'actor_id', 'step_number', 'state', 'action', 'next_state', 'reward', 'done'
-            self._set(transition.actor_id.to_bytes(self.int_size, 'big'))
-            self._set(transition.step_number.to_bytes(self.int_size, 'big'))
-            self._set(transition.state.tobytes())
-            self._set(transition.action.to_bytes(self.int_size, 'big'))
-            if transition.next_state is not None:
-                self._set(transition.next_state.tobytes())
-            else:
-                self._offset += self.array_bytes
-            self._set(int(transition.reward).to_bytes(self.int_size, 'big', signed=True))
-            self._set(transition.done.to_bytes(1, 'big'))
-
-    def _set(self, bytearray_: Union[bytearray, bytes]):
-        """
-        update `_buf` and move `_offset`
-
-        :param bytearray_: a bytearray
-        """
-        len_ = len(bytearray_)
-        self._buf[self._offset: self._offset + len_] = bytearray_
-        self._offset = self._offset + len_
+    def extend(self, transitions):
+        for t in transitions:
+            self.put(t)
 
     def __iter__(self):
-        for i in range(self._length):
-            yield self[i]
+        for m in self._memory:
+            yield m
 
 
 class Replay:
@@ -188,13 +93,13 @@ class Replay:
         self.mode = mode
 
         self.buffer_in = []
-        self.memory = Memory(self.memory_maxlen)
+        self.memory = None
         self.memory_length = mp.Value('i', 0)
         self.sample_count = 0
 
         self.logger = None
         self.memory_full_event = mp.Event()
-        self._main_proc = mp.Process(target=self._main, name="ReplaySample")
+        self._main_proc = mp.Process(target=self._main, name="ReplayMain")
 
     def __del__(self):
         self._terminate()
@@ -227,16 +132,19 @@ class Replay:
 
     def _main(self):
         r"""
-        Launch push thread and run push worker in the main thread.
+        Launch push process and run push worker in the main process.
         """
-        push_proc = mp.Process(target=self._push_worker, daemon=False, name="ReplayPush")
-        sample_procs = [mp.Process(target=self._sample_worker, daemon=True, name=f"ReplaySampler-{i}", args=(q, ))
-                        for i, q in enumerate(self.replay_out_queues)]
-        push_proc.start()
-        [p.start() for p in sample_procs]
+        with mp.Manager() as m:
+            self.memory = Memory(self.memory_maxlen, m.list())
+            push_proc = mp.Process(target=self._push_worker, daemon=False, name="ReplayPush")
+            sample_procs = [mp.Process(target=self._sample_worker, daemon=True, name=f"ReplaySampler-{i}", args=(q, ))
+                            for i, q in enumerate(self.replay_out_queues)]
 
-        push_proc.join()
-        [p.terminate() for p in sample_procs]
+            push_proc.start()
+            [p.start() for p in sample_procs]
+
+            push_proc.join()
+            [p.terminate() for p in sample_procs]
 
     def _push_worker(self) -> None:
         r"""
@@ -257,8 +165,7 @@ class Replay:
 
         self.buffer_in.append(sample)
         if len(self.buffer_in) >= buffer_len:
-            index = self.sample_count % self.memory_maxlen
-            self.memory[index: index + buffer_len] = self.buffer_in
+            self.memory.extend(self.buffer_in)
 
             self.sample_count += buffer_len
             if not self.memory_full_event.is_set() and self.sample_count >= self.initial_memory:
