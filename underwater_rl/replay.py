@@ -78,25 +78,25 @@ class Memory:
 
             actor_id = int.from_bytes(self._get(self.int_size), 'big')
             step_number = int.from_bytes(self._get(self.int_size), 'big')
-            state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape).copy()
+            state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape)
             action = int.from_bytes(self._get(self.int_size), 'big')
-            next_state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape).copy()
+            next_state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape)
             reward = int.from_bytes(self._get(self.int_size), 'big', signed=True)
             done = int.from_bytes(self._get(1), 'big')
             if done:
                 next_state = None
             return Transition(actor_id, step_number, state, action, next_state, reward, done)
 
-    def _get(self, n_bytes: int) -> memoryview:
+    def _get(self, n_bytes: int) -> bytes:
         """
         Get item at `_offset` and move forward `n_bytes`
 
         :param n_bytes: Number of bytes to retrieve from memory
-        :return: bytearray
+        :return: bytes copied from memory
         """
         item = self._buf[self._offset: self._offset + n_bytes]
         self._offset += n_bytes
-        return item
+        return item.tobytes()
 
     def __setitem__(self, index: Union[int, slice], transition: Union[List[Transition], Transition]):
         """
