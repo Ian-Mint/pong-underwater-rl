@@ -78,9 +78,9 @@ class Memory:
 
             actor_id = int.from_bytes(self._get(self.int_size), 'big')
             step_number = int.from_bytes(self._get(self.int_size), 'big')
-            state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape)
+            state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape).copy()
             action = int.from_bytes(self._get(self.int_size), 'big')
-            next_state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape)
+            next_state = np.frombuffer(self._get(self.array_bytes), dtype='uint8').reshape(self.array_shape).copy()
             reward = int.from_bytes(self._get(self.int_size), 'big', signed=True)
             done = int.from_bytes(self._get(1), 'big')
             if done:

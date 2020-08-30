@@ -1,3 +1,4 @@
+from copy import deepcopy
 import pickle
 import random
 import unittest
@@ -47,7 +48,7 @@ class TestMemory(unittest.TestCase):
         self.assert_transitions_equal(sample, self.memory[0])
 
     def test_sample_put_and_changed_not_equal_sample_pulled(self):
-        sample = data[0]
+        sample = deepcopy(data[0])
         self.memory[0] = sample
         assert not np.all(sample.state == data[1].state)
         sample.state[:] = data[1].state[:]
@@ -55,7 +56,7 @@ class TestMemory(unittest.TestCase):
 
     def test_sample_put_not_equal_changed_sample_pulled(self):
         # todo: pass this test case
-        sample = data[0]
+        sample = deepcopy(data[0])
         self.memory[0] = sample
 
         assert not np.all(sample.state == data[1].state)
