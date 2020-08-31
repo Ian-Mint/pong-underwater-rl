@@ -27,7 +27,7 @@ replay: 100000
 batch_size: 512
 #compress:  # comment out to turn off
 actors: 10
-samplers: 4
+samplers: 8
 
 # File control options
 #resume:  # comment out to turn off
