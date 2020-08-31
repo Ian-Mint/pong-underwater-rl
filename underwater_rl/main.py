@@ -40,7 +40,6 @@ from underwater_rl.models import *
 from underwater_rl.utils import *
 from underwater_rl.replay import Replay
 
-
 """
 With one replay_out_queue per decoder
 16 decoders:
@@ -55,7 +54,6 @@ With one replay_out_queue per decoder
 - 100 samples in 6-7 seconds
 - replay_out_queue oscillates
 """
-N_SAMPLERS = 8  # number of memory sampling processes
 
 
 def initialize_model(architecture: str) -> nn.Module:
@@ -148,12 +146,17 @@ def get_parser() -> argparse.ArgumentParser:
                          help='switch for prioritized replay (default: False)')
     rl_args.add_argument('--rank-based', dest='rank_based', default=False, action='store_true',
                          help='switch for rank-based prioritized replay (omit if proportional)')
-    rl_args.add_argument('--batch-size', dest='batch_size', default=512, type=int,
-                         help="network training batch size or sequence length for recurrent networks")
-    rl_args.add_argument('--compress', dest='compress_state', action='store_true', default=False,
-                         help="If set, store states compressed as png images. Add one CPU if set")
-    rl_args.add_argument('--actors', dest='n_actors', type=int, default=1,
-                         help="Number of actors to use. 3 + n_actors CPUs required")
+
+    '''computation args'''
+    comp_args = parser.add_argument_group("Computation", "Computational performance parameters")
+    comp_args.add_argument('--batch-size', dest='batch_size', default=512, type=int,
+                           help="network training batch size or sequence length for recurrent networks")
+    comp_args.add_argument('--compress', dest='compress_state', action='store_true', default=False,
+                           help="If set, store states compressed as png images. Add one CPU if set")
+    comp_args.add_argument('--actors', dest='n_actors', type=int, default=1,
+                           help="Number of actors to use. 3 + n_actors CPUs required")
+    comp_args.add_argument('--samplers', dest='n_samplers', type=int, default=2,
+                           help="Number of sampler processes to use. An equal number of decoder processes will spawn.")
 
     '''resume args'''
     resume_args = parser.add_argument_group("Resume", "Store experiments / Resume training")
@@ -272,7 +275,7 @@ def train(args, logger, log_queue):
 
     # Get shared objects
     model = initialize_model(args.network)
-    comms = get_communication_objects(args.n_actors)
+    comms = get_communication_objects(args.n_actors, args.n_samplers)
 
     # Create subprocesses
     actors = []
@@ -296,7 +299,7 @@ def train(args, logger, log_queue):
                       checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
                       log_queue=log_queue,
                       learning_params=learning_params,
-                      n_decoders=N_SAMPLERS)
+                      n_decoders=args.n_samplers)
     replay = Replay(comms.replay_in_q, comms.replay_out_q, log_queue, replay_params)
 
     # Start subprocesses
@@ -332,16 +335,17 @@ def run_all(actors: Iterable[Actor], method: str, *args, **kwargs) -> None:
         a.__getattribute__(method)(*args, **kwargs)
 
 
-def get_communication_objects(n_pipes: int) -> Comms:
+def get_communication_objects(n_pipes: int, n_samplers: int) -> Comms:
     r"""
     Return the various queues and pipes used to communicate between processes
 
     :param n_pipes: Number of ParamPipes. Should equal the number of actors.
+    :param n_samplers: number of sampler processes to use.
     :return: (memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes)
     """
     memory_queue = mp.Queue(maxsize=1_000)
     replay_in_queue = mp.Queue(maxsize=1_000)
-    replay_out_queues = [mp.Queue(maxsize=1_000) for _ in range(N_SAMPLERS)]
+    replay_out_queues = [mp.Queue(maxsize=1_000) for _ in range(n_samplers)]
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]

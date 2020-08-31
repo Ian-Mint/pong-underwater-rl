@@ -27,7 +27,7 @@ if __name__ == '__main__':
     }
     logger, log_q = get_logger('../tmp')
     model = initialize_model('dqn')
-    comms = get_communication_objects(1)
+    comms = get_communication_objects(1, 1)
     actor = Actor(model=model,
                   n_episodes=1,
                   render_mode='none',

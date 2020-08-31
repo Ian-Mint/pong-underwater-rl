@@ -70,7 +70,7 @@ def main():
 
     logger, log_queue = rl_main.get_logger(LOG_DIR)
     model = rl_main.initialize_model(NETWORK)
-    memory_queue, replay_in_queue, replay_out_queues, sample_queue, pipes = rl_main.get_communication_objects(10)
+    memory_queue, replay_in_queue, replay_out_queues, sample_queue, pipes = rl_main.get_communication_objects(10, 4)
     learner = learn.Learner(
         optimizer=optim.Adam, model=model, replay_out_queues=replay_out_queues, sample_queue=sample_queue,
         pipes=pipes, checkpoint_path=os.path.join(LOG_DIR, 'dqn.torch'), log_queue=log_queue,

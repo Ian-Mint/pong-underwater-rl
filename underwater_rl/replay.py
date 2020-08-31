@@ -175,7 +175,7 @@ class Replay:
         Stores and samples the replay memory.
 
         :param replay_in_queue: The queue used to retrieve samples
-        :param replay_out_queues: List of queues for pushing samples. One queue for each decoder
+        :param replay_out_queues: List of queues for pushing samples. One queue for each decoder-sampler pair.
         :param params: parameters controlling the replay memory behavior (length, etc.)
         :param mode: {'default', 'episodic'}
         """

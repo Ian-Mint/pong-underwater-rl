@@ -1,16 +1,15 @@
 """
 144 samples pushed in 60s
 """
-from itertools import count
+import multiprocessing as mp
+import multiprocessing.queues as queues
 import os
 import pickle
 import queue
 import random
+import sys
 import threading
 import time
-import multiprocessing as mp
-import multiprocessing.queues as queues
-import sys
 
 try:
     import underwater_rl
@@ -154,9 +153,10 @@ if __name__ == '__main__':
     mp.set_start_method('forkserver')
     _ctx = mp.get_context()
 
-    comms = get_communication_objects(1)
+    comms = get_communication_objects(1, 4)
     logger, log_q = get_logger('tmp', mode='w')
-    replay = Replay(replay_in_queue=comms.replay_in_q, replay_out_queues=, log_queue=log_q, params=replay_params)
+    replay = Replay(replay_in_queue=comms.replay_in_q, replay_out_queues=comms.replay_out_q, log_queue=log_q,
+                    params=replay_params)
     count_procs = [mp.Process(target=counter_worker, args=(comms.replay_out_q, log_q)) for _ in range(4)]
     push_thread = threading.Thread(target=push_worker, args=(comms.replay_in_q, ), daemon=True)
 
