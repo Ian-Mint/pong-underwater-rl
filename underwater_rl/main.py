@@ -345,7 +345,7 @@ def get_communication_objects(n_pipes: int, n_samplers: int) -> Comms:
     """
     memory_queue = mp.Queue(maxsize=1_000)
     replay_in_queue = mp.Queue(maxsize=1_000)
-    replay_out_queues = [mp.Queue(maxsize=20) for _ in range(n_samplers)]
+    replay_out_queues = [mp.Queue(maxsize=100) for _ in range(n_samplers)]
     sample_queue = mp.Queue(maxsize=20)
 
     pipes = [ParamPipe() for _ in range(n_pipes)]
