@@ -10,6 +10,7 @@ import random
 import sys
 import threading
 import time
+from typing import List
 
 try:
     import underwater_rl
@@ -125,16 +126,20 @@ def test_replay_async(test_duration_s):
 
 def push_worker(q: mp.Queue, sleep: float = 0):
     logger.info(f"tid: {get_tid()} | Push worker started")
-    with open('assets/raw_samples.p', 'rb') as f:
+    with open('assets/memory-np.p', 'rb') as f:
         samples = pickle.load(f)
 
+    data = []
+    for s in samples:
+        data.append(Transition(*s))
+
     while True:
-        s = random.choice(samples)
+        s = random.choice(data)
         q.put(s)
         time.sleep(sleep)
 
 
-def counter_worker(q: mp.Queue, log_q: mp.Queue):
+def counter_worker(queue: List[mp.Queue], log_q: mp.Queue):
     logger = get_logger_from_process(log_q)
 
     timeout = 60.
@@ -142,10 +147,11 @@ def counter_worker(q: mp.Queue, log_q: mp.Queue):
     counter = 0
     logger.info(f"tid {get_tid()} | counter started")
     while time.time() - t_start < timeout:
-        counter += 1
-        q.get()
-        if q.empty():
-            logger.debug("replay_out_queue EMPTY")
+        for i, q in enumerate(queue):
+            counter += 1
+            q.get()
+            if q.empty():
+                logger.debug(f"replay_out_queue-{i} EMPTY")
     logger.info(f"{counter} samples pushed in {timeout} seconds")
 
 
@@ -153,12 +159,12 @@ if __name__ == '__main__':
     mp.set_start_method('forkserver')
     _ctx = mp.get_context()
 
-    comms = get_communication_objects(1, 4)
+    comms = get_communication_objects(1, 1)
     logger, log_q = get_logger('tmp', mode='w')
     replay = Replay(replay_in_queue=comms.replay_in_q, replay_out_queues=comms.replay_out_q, log_queue=log_q,
                     params=replay_params)
-    count_procs = [mp.Process(target=counter_worker, args=(comms.replay_out_q, log_q)) for _ in range(4)]
-    push_thread = threading.Thread(target=push_worker, args=(comms.replay_in_q, ), daemon=True)
+    count_procs = [mp.Process(target=counter_worker, args=(comms.replay_out_q, log_q)) for _ in range(1)]
+    push_thread = threading.Thread(target=push_worker, args=(comms.replay_in_q,), daemon=True)
 
     push_thread.start()
     replay.start()
