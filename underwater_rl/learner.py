@@ -5,6 +5,7 @@ import time
 from collections import OrderedDict
 from copy import deepcopy
 from itertools import count
+from multiprocessing.managers import DictProxy
 from typing import Callable, List, Dict, Union, Tuple
 import sys
 
@@ -19,9 +20,8 @@ try:
     import underwater_rl
 except ImportError:
     sys.path.append(os.path.abspath(os.path.pardir))
-from underwater_rl.common import BaseWorker, ParamPipe, Transition
+from underwater_rl.common import BaseWorker, Transition
 from underwater_rl.utils import get_logger_from_process, get_tid
-
 
 CHECKPOINT_INTERVAL = 100  # number of batches between storing a checkpoint
 TARGET_UPDATE_INTERVAL = 100  # number of batches between updating the target network
@@ -276,7 +276,8 @@ class Learner(BaseWorker):
                  model,
                  replay_out_queues: List[torch.multiprocessing.Queue],
                  sample_queue: torch.multiprocessing.Queue,
-                 pipes: List[ParamPipe], checkpoint_path: str,
+                 model_params: DictProxy,
+                 checkpoint_path: str,
                  log_queue: torch.multiprocessing.Queue,
                  learning_params: Dict[str, Union[float, int]],
                  n_decoders: int = 2,
@@ -289,7 +290,7 @@ class Learner(BaseWorker):
         :param model: The initialized model object to be copied into the learner
         :param replay_out_queues: _sample batches are pulled from this queue for decoding
         :param sample_queue: decoded batches are put on this queue for training
-        :param pipes: list of `ParamPipe` objects for communicating with Actors
+        :param model_params: a proxy to the model state dictionary
         :param checkpoint_path: Checkpoint save path
         :param log_queue: Queue object to be pushed to the log handler for the learner process
         :param learning_params: Parameters to control learning
@@ -297,7 +298,6 @@ class Learner(BaseWorker):
         """
         self.replay_out_queues = replay_out_queues
         self.sample_queue = sample_queue
-        self.pipes = pipes
         self.log_queue = log_queue
         self._run_profile = run_profile
 
@@ -311,9 +311,10 @@ class Learner(BaseWorker):
         self.target = deepcopy(model).to(self.device)
         self.optimizer = optimizer(self.policy.parameters(), lr=self.learning_rate)
 
-        self.params = None
+        self.model_params = model_params
         self.params_lock = None
         self.policy_lock = None
+
         self.logger = None
         self.loss = None
         self.epoch = 0
@@ -369,32 +370,18 @@ class Learner(BaseWorker):
                     for i, q in enumerate(self.replay_out_queues)]
         [d.start() for d in decoders]
 
+        self.manager = mp.Manager()
+        self.model_params = self.manager.dict(self._policy_state_dict_cpu())
+
+        self.policy_lock = threading.Lock()
         self.logger = get_logger_from_process(self.log_queue)
         self.logger.info(f"tid: {get_tid()} | Learner started on device {self.device}")
 
-        self.policy_lock = threading.Lock()
-        self.params_lock = threading.Lock()
-
-        # TODO: put this stuff in a new process with multiple threads so that we get 100% CPU usage on the learner
         param_update_thread = threading.Thread(target=self._copy_params, name='UpdateParams', daemon=True)
-        if self._run_profile:
-            import yappi
-            yappi.start()
-
         param_update_thread.start()
-        for n, p in enumerate(self.pipes):
-            t = threading.Thread(target=self._send_params, args=(p,), name=f'SendParams-{n}', daemon=True)
-            t.start()
 
         self._optimizer_loop()
         [d.join() for d in decoders]
-
-        if self._run_profile:
-            yappi.stop()
-            threads = yappi.get_thread_stats()
-            for thread in threads:
-                print("Function stats for (%s) (%d)" % (thread.name, thread.id))
-                yappi.get_func_stats(ctx_id=thread.id).print_all()
 
     def _optimizer_loop(self) -> None:
         """
@@ -421,34 +408,19 @@ class Learner(BaseWorker):
         Update the pipe every 2.5 seconds. Keep a lock to the pipe while it is being updated.
         """
         while True:
-            with self.params_lock:
-                with self.policy_lock:
-                    self._policy_state_dict_to_params()
+            with self.policy_lock:
+                self.model_params.update(self._policy_state_dict_cpu())
             time.sleep(2.5)
 
-    def _policy_state_dict_to_params(self):
+    def _policy_state_dict_cpu(self):
+        """
+        Returns the policy state dict copied to cpu
+        """
         cuda_state_dict = self.policy.state_dict()
-        self.params = OrderedDict()
+        params_dict = OrderedDict()
         for k, v in cuda_state_dict.items():
-            self.params[k] = v.to('cpu', non_blocking=True)
-
-    def _send_params(self, pipe: ParamPipe) -> None:
-        """
-        Thread to send params through `pipe`
-
-        :param pipe: ParamPipe object associated with an actor
-        """
-        while self.params is None:
-            time.sleep(1)
-
-        # todo: rework on receiving end. the pipe works like a queue, when we need it to hold just one item
-        while True:
-            if pipe.event.is_set():
-                with self.params_lock:
-                    pipe.conn_out.send(self.params)
-                pipe.event.clear()
-            else:
-                time.sleep(0.01)
+            params_dict[k] = v.to('cpu', non_blocking=True)
+        return params_dict
 
     def _optimize_model(self, batch: ProcessedBatch):
         """

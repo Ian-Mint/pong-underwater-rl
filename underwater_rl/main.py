@@ -34,7 +34,7 @@ if not ('linux' in sys.platform):
     raise Warning(f"{sys.platform} is not supported")
 
 from underwater_rl.actor import Actor, ActorTest, N_ACTIONS
-from underwater_rl.common import ParamPipe, DEVICE, Comms
+from underwater_rl.common import DEVICE, Comms
 from underwater_rl.learner import Learner
 from underwater_rl.models import *
 from underwater_rl.utils import *
@@ -254,7 +254,6 @@ def train(args, logger, log_queue):
         'architecture': args.network,
     }
 
-    # todo: subclass actor to implement steps_decay
     if args.steps_decay:
         raise NotImplementedError("steps_decay is not yet implemented")
 
@@ -275,17 +274,19 @@ def train(args, logger, log_queue):
 
     # Get shared objects
     model = initialize_model(args.network)
-    comms = get_communication_objects(args.n_actors, args.n_samplers)
+    comms = get_communication_objects(args.n_samplers)
+    manager = mp.Manager()
+    model_params = manager.dict(model.state_dict())
 
     # Create subprocesses
     actors = []
-    for p in comms.pipes:
+    for _ in range(args.n_actors):
         a = Actor(model=model,
                   n_episodes=args.episodes,
                   render_mode=args.render,
                   memory_queue=comms.memory_q,
                   replay_in_queue=comms.replay_in_q,
-                  pipe=p,
+                  model_params=model_params,
                   global_args=args,
                   log_queue=log_queue,
                   actor_params=actor_params)
@@ -295,7 +296,7 @@ def train(args, logger, log_queue):
                       model=model,
                       replay_out_queues=comms.replay_out_q,
                       sample_queue=comms.sample_q,
-                      pipes=comms.pipes,
+                      model_params=model_params,
                       checkpoint_path=os.path.join(args.store_dir, 'dqn.torch'),
                       log_queue=log_queue,
                       learning_params=learning_params,
@@ -316,6 +317,7 @@ def train(args, logger, log_queue):
     finally:
         del replay
         del learner
+        manager.shutdown()
 
 
 def run_all(actors: Iterable[Actor], method: str, *args, **kwargs) -> None:
@@ -335,21 +337,18 @@ def run_all(actors: Iterable[Actor], method: str, *args, **kwargs) -> None:
         a.__getattribute__(method)(*args, **kwargs)
 
 
-def get_communication_objects(n_pipes: int, n_samplers: int) -> Comms:
+def get_communication_objects(n_samplers: int) -> Comms:
     r"""
     Return the various queues and pipes used to communicate between processes
 
-    :param n_pipes: Number of ParamPipes. Should equal the number of actors.
     :param n_samplers: number of sampler processes to use.
-    :return: (memory_queue, replay_in_queue, replay_out_queue, sample_queue, pipes)
     """
     memory_queue = mp.Queue(maxsize=1_000)
     replay_in_queue = mp.Queue(maxsize=1_000)
     replay_out_queues = [mp.Queue(maxsize=100) for _ in range(n_samplers)]
     sample_queue = mp.Queue(maxsize=20)
 
-    pipes = [ParamPipe() for _ in range(n_pipes)]
-    return Comms(memory_queue, replay_in_queue, replay_out_queues, sample_queue, pipes)
+    return Comms(memory_queue, replay_in_queue, replay_out_queues, sample_queue)
 
 
 if __name__ == '__main__':
