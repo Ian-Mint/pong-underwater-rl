@@ -9,6 +9,7 @@ import shutil
 import time
 from copy import deepcopy
 from itertools import count
+from multiprocessing.managers import DictProxy
 from typing import Union, Dict, Tuple, List
 import sys
 
@@ -23,14 +24,14 @@ try:
 except ImportError:
     sys.path.append(os.path.abspath(os.path.pardir))
 
-from underwater_rl.common import BaseWorker, ParamPipe, Transition, HistoryElement, DEVICE
+from underwater_rl.common import BaseWorker, Transition, HistoryElement, DEVICE
 from underwater_rl.utils import get_logger_from_process, convert_images_to_video, get_tid
 from underwater_rl.wrappers import LazyFrames, make_env
 
 
 MAX_STEPS_PER_EPISODE = 50_000
 N_ACTIONS = 3
-ACTOR_UPDATE_INTERVAL = 1000
+PARAM_UPDATE_INTERVAL_STEPS = 1000  # TODO: try updating every episode instead
 
 
 class State:
@@ -116,7 +117,7 @@ class Actor(BaseWorker):
                  render_mode: Union[str, bool],
                  memory_queue: mp.Queue,
                  replay_in_queue: mp.Queue,
-                 pipe: ParamPipe,
+                 model_params: DictProxy,
                  global_args: argparse.Namespace,
                  log_queue: torch.multiprocessing.Queue,
                  actor_params: Dict[str, Union[int, float]],
@@ -124,17 +125,17 @@ class Actor(BaseWorker):
         r"""
         Continually steps the environment and pushes experiences to replay memory
 
-        :param pipe: `ParamPipe` object for communication with the learner
         :param n_episodes: Number of episodes over which to train or test
         :param render_mode: How and whether to visibly render states
         :param memory_queue: The queue that experiences are put in for encoding
         :param replay_in_queue: The queue of encoded experiences for storage
+        :param model_params: proxy to the model state dictionary
         :param global_args: The namespace returned bye the global argument parser
         :param log_queue: Queue used to pass logging information to a handler
         :param actor_params: dictionary of parameters used to determine actor behavior
         :param image_dir: required if render_mode is not `False`
         """
-        self.pipe = pipe
+        self.model_params = model_params
         self.replay_in_queue = replay_in_queue
         self.memory_queue = memory_queue
         self.log_queue = log_queue
@@ -243,10 +244,7 @@ class Actor(BaseWorker):
         r"""
         Request a parameter update from the learner
         """
-        self.pipe.event.set()
-        wait_event_not_set(self.pipe.event, timeout=None)
-        params = self.pipe.conn_in.recv()
-        self.policy.load_state_dict(params)
+        self.policy.load_state_dict(self.model_params)
         self.logger.debug(f"Actor-{self.id} params updated")
 
     def _run_episode(self):
@@ -260,7 +258,7 @@ class Actor(BaseWorker):
         for steps in count():
             done, reward, state = self._run_step(state)
             total_reward += reward
-            if self.total_steps % ACTOR_UPDATE_INTERVAL == 0:
+            if self.total_steps % PARAM_UPDATE_INTERVAL_STEPS == 0:
                 self._update_params()
             if done or steps >= MAX_STEPS_PER_EPISODE:
                 break

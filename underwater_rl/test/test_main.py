@@ -117,7 +117,7 @@ class TestMemoryEncoder(unittest.TestCase):
         main.create_storage_dir(main.args.store_dir)
         main.logger = main.get_logger(main.args.store_dir)
 
-        self.memory_queue, _, _, _, _, self.replay_out_queue, _ = main.get_communication_objects(main.args.actors, 1)
+        self.memory_queue, _, _, _, _, self.replay_out_queue, _ = main.get_communication_objects(1)
 
         self.proc = mp.Process(target=main.memory_encoder, args=(self.memory_queue, self.replay_out_queue))
 
@@ -181,15 +181,15 @@ class TestModelInitialization(unittest.TestCase):
 
 
 class TestActor(unittest.TestCase):
+    # todo: this is all broken
     def setUp(self) -> None:
         set_main_args()
         set_main_constants()
         main.ARCHITECTURE = 'dqn'
 
         model = main.initialize_model(main.args.architecture)
-        memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects(main.args.actors, 1)
-        self.actor = underwater_rl.actor.Actor(model=model, n_episodes=10, render_mode=False, memory_queue=memory_queue,
-                                               replay_in_queue=main.replay_out_queues, pipe=None)
+        memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects(1)
+        self.actor = underwater_rl.actor.Actor()
 
         obs = self.actor.env.reset()
         self.state = underwater_rl.actor.get_state(obs)
@@ -249,7 +249,7 @@ class TestReplay(unittest.TestCase):
         set_main_args()
         set_main_constants()
 
-        _, _, _, replay_in_queue, replay_out_queue, _ = main.get_communication_objects(main.args.actors, 1)
+        _, _, _, replay_in_queue, replay_out_queue, _ = main.get_communication_objects(1)
         self.replay = main.Replay(replay_in_queue, replay_out_queue, main.log_queue, )
 
     # todo: mock some queues and test multiprocessing
@@ -269,9 +269,9 @@ class TestLearner(unittest.TestCase):
         main.logger = main.get_logger(self.store_dir)
 
         model = main.initialize_model(main.args.architecture)
-        _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects(main.args.actors, 1)
+        _, _, params_out, param_update_request, _, _, sample_queue = main.get_communication_objects(1)
         self.learner = underwater_rl.learner.Learner(optimizer=optim.Adam, model=model, replay_out_queues=main.replay_out_queues,
-                                                     sample_queue=sample_queue, pipes=params_out)
+                                                     sample_queue=sample_queue, model_params=params_out)
 
     def tearDown(self) -> None:
         del self.learner

@@ -9,23 +9,11 @@ Transition = namedtuple('Transition', ('actor_id', 'step_number', 'state', 'acti
 HistoryElement = namedtuple('HistoryElement', ('n_steps', 'total_reward'))
 
 
-class ParamPipe:
-    def __init__(self):
-        """
-        Creates and holds an event object and a multiprocessing connection pair.
-
-        Utility class used for communicating between learner and actors.
-        """
-        self.event = torch.multiprocessing.Event()
-        self.conn_in, self.conn_out = mp.Pipe(duplex=False)
-
-
 class Comms(NamedTuple):
     memory_q: mp.Queue
     replay_in_q: mp.Queue
     replay_out_q: List[mp.Queue]
     sample_q: mp.Queue
-    pipes: List[ParamPipe]
 
 
 class BaseWorker(abc.ABC):

@@ -27,15 +27,9 @@ if __name__ == '__main__':
     }
     logger, log_q = get_logger('../tmp')
     model = initialize_model('dqn')
-    comms = get_communication_objects(1, 1)
-    actor = Actor(model=model,
-                  n_episodes=1,
-                  render_mode='none',
-                  memory_queue=comms.memory_q,
-                  replay_in_queue=comms.replay_in_q,
-                  pipe=comms.pipes.pop(),
-                  global_args=args,
-                  log_queue=log_q,
+    comms = get_communication_objects(1)
+    actor = Actor(model=model, n_episodes=1, render_mode='none', memory_queue=comms.memory_q,
+                  replay_in_queue=comms.replay_in_q, model_params=model_params, global_args=args, log_queue=log_q,
                   actor_params=actor_params)
     actor.start()
 

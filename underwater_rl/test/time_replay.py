@@ -159,7 +159,7 @@ if __name__ == '__main__':
     mp.set_start_method('forkserver')
     _ctx = mp.get_context()
 
-    comms = get_communication_objects(1, 1)
+    comms = get_communication_objects(1)
     logger, log_q = get_logger('tmp', mode='w')
     replay = Replay(replay_in_queue=comms.replay_in_q, replay_out_queues=comms.replay_out_q, log_queue=log_q,
                     params=replay_params)
