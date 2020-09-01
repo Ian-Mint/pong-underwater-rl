@@ -149,6 +149,7 @@ class Actor(BaseWorker):
 
         self._set_device()
         self.policy = self.policy.to(self.device)
+        self.policy.requires_grad_(False)
 
         self.id = self.counter
         type(self).counter += 1
@@ -349,6 +350,11 @@ class Actor(BaseWorker):
         if self.render_mode == 'png':
             convert_images_to_video(image_dir=self.image_dir, save_dir=os.path.dirname(self.image_dir))
             shutil.rmtree(self.image_dir)
+
+
+class NoisyActor(Actor):
+    def _select_action(self, state: torch.Tensor) -> int:
+        return self.policy(state).max(1)[1].item()
 
 
 class ActorTest(Actor):

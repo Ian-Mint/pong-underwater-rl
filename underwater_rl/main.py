@@ -33,7 +33,7 @@ except ImportError:
 if not ('linux' in sys.platform):
     raise Warning(f"{sys.platform} is not supported")
 
-from underwater_rl.actor import Actor, ActorTest, N_ACTIONS
+from underwater_rl.actor import N_ACTIONS
 from underwater_rl.common import ParamPipe, DEVICE, Comms
 from underwater_rl.learner import Learner
 from underwater_rl.models import *
@@ -67,7 +67,8 @@ def initialize_model(architecture: str) -> nn.Module:
                     'soft_dqn': softDQN,
                     'dueling_dqn': DuelingDQN,
                     'lstm': DRQN,
-                    'distributional_dqn': DistributionalDQN}
+                    'distributional_dqn': DistributionalDQN,
+                    'noisy': NoisyDQN}
     return model_lookup[architecture](n_actions=N_ACTIONS)  # Allow users of the model to put it on the desired device
 
 
@@ -122,7 +123,7 @@ def get_parser() -> argparse.ArgumentParser:
                          help='learning rate (default: 1e-4)')
     rl_args.add_argument('--network', default='dqn',
                          choices=['dqn', 'soft_dqn', 'dueling_dqn', 'resnet18', 'resnet10', 'resnet12',
-                                  'resnet14', 'lstm', 'distribution_dqn'],
+                                  'resnet14', 'noisy', 'lstm', 'distribution_dqn'],
                          help='choose a network architecture (default: dqn)')
     rl_args.add_argument('--double', default=False, action='store_true',
                          help='switch for double dqn (default: False)')
@@ -188,8 +189,8 @@ def create_storage_dir(directory: str) -> None:
 def load_checkpoint(path: str, model) -> None:
     """
     Load policy net and target_net state from file
-    
-    :param path: path to the checkpoint 
+
+    :param path: path to the checkpoint
     :param model: policy model object
     """
     checkpoint = torch.load(path, map_location='cpu')
@@ -215,6 +216,8 @@ def main() -> None:
 
 
 def test(args, logger):
+    from underwater_rl.actor import ActorTest as Actor
+
     actor_params = {
         'test_mode': True,
         'save_transitions': args.save_transitions,
@@ -228,12 +231,12 @@ def test(args, logger):
     model = initialize_model(args.network)
     load_checkpoint(args.checkpoint, model)
 
-    actor = ActorTest(model=model,
-                      n_episodes=args.episodes,
-                      render_mode=args.render,
-                      global_args=args,
-                      logger=logger,
-                      actor_params=actor_params)
+    actor = Actor(model=model,
+                  n_episodes=args.episodes,
+                  render_mode=args.render,
+                  global_args=args,
+                  logger=logger,
+                  actor_params=actor_params)
 
     actor.start()
 
@@ -244,6 +247,19 @@ def test(args, logger):
         del actor
 
 
+def import_actor(model: str):
+    """
+    Get the correct actor class depending on the model we're using.
+    """
+    import underwater_rl.actor as mod
+    lookup = {
+        'dqn': mod.Actor,
+        'noisy': mod.NoisyActor,
+    }
+    return lookup[model]
+
+
+# noinspection PyPep8Naming
 def train(args, logger, log_queue):
     learning_params = {
         'batch_size': args.batch_size,
@@ -275,6 +291,7 @@ def train(args, logger, log_queue):
 
     # Get shared objects
     model = initialize_model(args.network)
+    Actor = import_actor(args.network)
     comms = get_communication_objects(args.n_actors, args.n_samplers)
 
     # Create subprocesses
@@ -318,7 +335,7 @@ def train(args, logger, log_queue):
         del learner
 
 
-def run_all(actors: Iterable[Actor], method: str, *args, **kwargs) -> None:
+def run_all(actors: Iterable, method: str, *args, **kwargs) -> None:
     r"""
     Executes `method` for all actors in `actors`. Equivalent to
     ```

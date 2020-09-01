@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +10,7 @@ except ImportError:
     from torch.utils.model_zoo import load_url as load_state_dict_from_url
 
 __all__ = ['DQNbn', 'DQN', 'DuelingDQN', 'softDQN', 'DistributionalDQN', 'ResNet', 'resnet18', 'resnet10', 'resnet12',
-           'resnet14', 'PolicyGradient', 'ActorModel', 'CriticModel', 'DRQN']
+           'resnet14', 'PolicyGradient', 'NoisyDQN', 'ActorModel', 'CriticModel', 'DRQN']
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 
@@ -69,6 +71,7 @@ class DQN(nn.Module):
         return self.head(x)
 
 
+# noinspection PyAbstractClass
 class PolicyGradient(nn.Module):
     def __init__(self, in_channels=4, n_actions=14):
         """
@@ -124,6 +127,7 @@ class CriticModel(nn.Module):
         return self.head(x)
 
 
+# noinspection PyAbstractClass
 class ActorModel(nn.Module):
     def __init__(self, in_channels=4, n_actions=14):
         """
@@ -151,6 +155,7 @@ class ActorModel(nn.Module):
         return action_prob
 
 
+# noinspection PyAbstractClass
 class DRQN(DQN):
     """
     Deep Recurrent Q Network
@@ -179,6 +184,7 @@ class DRQN(DQN):
         return self.head(x.reshape(-1, self.hidden_dim))  # todo: view instead of reshape?
 
 
+# noinspection PyAbstractClass
 class DuelingDQN(nn.Module):
     def __init__(self, in_channels=4, n_actions=14, **kwargs):
         """
@@ -218,6 +224,7 @@ class DuelingDQN(nn.Module):
         return action_value_out
 
 
+# noinspection PyAbstractClass
 class softDQN(nn.Module):
     def __init__(self, in_channels=4, n_actions=14, **kwargs):
         """
@@ -248,6 +255,57 @@ class softDQN(nn.Module):
         return v
 
 
+# noinspection PyAbstractClass
+class NoisyLinear(nn.Linear):
+    def __init__(self, in_features, out_features, sigma_init=0.017, bias=True):
+        super(NoisyLinear, self).__init__(in_features, out_features, bias=bias)
+        self.sigma_weight = nn.Parameter(torch.full((out_features, in_features), sigma_init))
+        self.register_buffer("epsilon_weight", torch.zeros(out_features, in_features))
+        if bias:
+            self.sigma_bias = nn.Parameter(torch.full((out_features,), sigma_init))
+            self.register_buffer("epsilon_bias", torch.zeros(out_features))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        std = math.sqrt(3 / self.in_features)
+        self.weight.data.uniform_(-std, std)
+        self.bias.data.uniform_(-std, std)
+
+    def forward(self, x):
+        self.epsilon_weight.normal_()
+        bias = self.bias
+        if bias is not None:
+            self.epsilon_bias.normal_()
+            bias = bias + self.sigma_bias * self.epsilon_bias.data
+        return F.linear(x, self.weight + self.sigma_weight * self.epsilon_weight.data, bias)
+
+
+# noinspection PyAbstractClass
+class NoisyDQN(nn.Module):
+    def __init__(self, in_channels=4, n_actions=14):
+        super(NoisyDQN, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.fc4 = NoisyLinear(7 * 7 * 64, 512)
+        self.head = NoisyLinear(512, n_actions)
+
+    def forward(self, x):
+        x = x.float() / 255
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.fc4(x.reshape(x.size(0), -1)))
+        return self.head(x)
+
+    def noisy_layers_sigma_snr(self):
+        return [
+            ((layer.weight ** 2).mean().sqrt() / (layer.sigma_weight ** 2).mean().sqrt()).item()
+            for layer in self.noisy_layers
+        ]
+
+
+# noinspection PyAbstractClass
 class DistributionalDQN(nn.Module):
     def __init__(self, in_channels=4, n_actions=14):
         """
@@ -309,6 +367,7 @@ def conv1x1(in_planes, out_planes, stride=1):
     return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
 
 
+# noinspection PyAbstractClass
 class BasicBlock(nn.Module):
     expansion = 1
 
@@ -349,6 +408,7 @@ class BasicBlock(nn.Module):
         return out
 
 
+# noinspection PyAbstractClass
 class Bottleneck(nn.Module):
     """
     Bottleneck in torchvision places the stride for downsampling at 3x3 convolution(self.conv2)
@@ -400,6 +460,7 @@ class Bottleneck(nn.Module):
         return out
 
 
+# noinspection PyAbstractClass
 class ResNet(nn.Module):
 
     def __init__(self, block, layers, n_actions=1000, zero_init_residual=False,
