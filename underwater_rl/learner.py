@@ -312,7 +312,6 @@ class Learner(BaseWorker):
         self.optimizer = optimizer(self.policy.parameters(), lr=self.learning_rate)
 
         self.model_params = model_params
-        self.params_lock = None
         self.policy_lock = None
 
         self.logger = None
@@ -369,9 +368,6 @@ class Learner(BaseWorker):
         decoders = [Decoder(self.log_queue, q, self.sample_queue, i, daemon=True)
                     for i, q in enumerate(self.replay_out_queues)]
         [d.start() for d in decoders]
-
-        self.manager = mp.Manager()
-        self.model_params = self.manager.dict(self._policy_state_dict_cpu())
 
         self.policy_lock = threading.Lock()
         self.logger = get_logger_from_process(self.log_queue)

@@ -1,12 +1,12 @@
 """
 Results:
->>> timeit(lambda: learner._policy_state_dict_cpu(), number=10_000)  # copy=True
+timeit(lambda: learner._policy_state_dict_cpu(), number=10_000)  # copy=True
 6.429219907993684
 
->>> timeit(lambda: learner._policy_state_dict_cpu(), number=10_000)  # copy=False
+timeit(lambda: learner._policy_state_dict_cpu(), number=10_000)  # copy=False
 0.2709134070028085
 
->>> timeit(lambda: learner._policy_state_dict_cpu(), number=10_000)  # copy=True, non_blocking=True
+timeit(lambda: learner._policy_state_dict_cpu(), number=10_000)  # copy=True, non_blocking=True
 6.416077349989791
 
 On 4-core CPU:
@@ -26,6 +26,8 @@ from timeit import timeit
 
 import torch.multiprocessing as mp
 from torch import optim
+
+N_DECODERS = 1
 
 try:
     import underwater_rl
@@ -69,20 +71,23 @@ def main():
 
     logger, log_queue = rl_main.get_logger(LOG_DIR)
     model = rl_main.initialize_model(NETWORK)
-    memory_queue, replay_in_queue, replay_out_queues, sample_queue, pipes = rl_main.get_communication_objects(4)
-    learner = learn.Learner(
-        optimizer=optim.Adam, model=model, replay_out_queues=replay_out_queues, sample_queue=sample_queue,
-        model_params=pipes, checkpoint_path=os.path.join(LOG_DIR, 'dqn.torch'), log_queue=log_queue,
-        learning_params=learning_params, n_decoders=2, run_profile=True
-    )
+    memory_queue, replay_in_queue, replay_out_queues, sample_queue = rl_main.get_communication_objects(1)
 
-    test_duration = 60
-    queue_pusher = threading.Thread(target=queue_maintainer, args=(sample_queue, test_duration), daemon=True)
-    queue_pusher.start()
-    time.sleep(1)  # allow the queue to fill
+    with mp.Manager() as manager:
+        model_params = manager.dict(model.state_dict())
+        learner = learn.Learner(
+            optimizer=optim.Adam, model=model, replay_out_queues=replay_out_queues, sample_queue=sample_queue,
+            model_params=model_params, checkpoint_path=os.path.join(LOG_DIR, 'dqn.torch'), log_queue=log_queue,
+            learning_params=learning_params, n_decoders=N_DECODERS, run_profile=True
+        )
 
-    learner.start()
-    time.sleep(test_duration + 20)
+        test_duration = 60
+        queue_pusher = threading.Thread(target=queue_maintainer, args=(sample_queue, test_duration), daemon=True)
+        queue_pusher.start()
+        time.sleep(1)  # allow the queue to fill
+
+        learner.start()
+        time.sleep(test_duration + 20)
 
 
 if __name__ == '__main__':

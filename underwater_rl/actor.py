@@ -31,7 +31,7 @@ from underwater_rl.wrappers import LazyFrames, make_env
 
 MAX_STEPS_PER_EPISODE = 50_000
 N_ACTIONS = 3
-ACTOR_UPDATE_INTERVAL = 1000
+PARAM_UPDATE_INTERVAL_STEPS = 1000  # TODO: try updating every episode instead
 
 
 class State:
@@ -257,7 +257,7 @@ class Actor(BaseWorker):
         for steps in count():
             done, reward, state = self._run_step(state)
             total_reward += reward
-            if self.total_steps % ACTOR_UPDATE_INTERVAL == 0:
+            if self.total_steps % PARAM_UPDATE_INTERVAL_STEPS == 0:
                 self._update_params()
             if done or steps >= MAX_STEPS_PER_EPISODE:
                 break
