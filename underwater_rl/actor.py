@@ -352,7 +352,8 @@ class Actor(BaseWorker):
 
 class NoisyActor(Actor):
     def _select_action(self, state: torch.Tensor) -> int:
-        return self.policy(state).max(1)[1].item()
+        with torch.no_grad():
+            return self.policy(state).max(1)[1].item()
 
 
 class ActorTest(Actor):
