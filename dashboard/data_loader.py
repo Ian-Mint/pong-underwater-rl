@@ -35,7 +35,7 @@ def _parse_history_from_log(file):
     actor_pattern = re.compile(r'(?<=--actors )\d+')
     reward_pattern = re.compile(r'(?<=Reward: )[-\d]\d*')
     steps_pattern = re.compile(r'(?<=Steps: )\d+')
-    full_pattern = re.compile(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO {4}\| '
+    full_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO {4}\| )?'
                               r'Actor: \d+ *\tTotal steps: \d+ *\tEpisode: \d+ *\tReward: [-\d]\d* *\tSteps: \d+$')
     history = []
     batch = []
