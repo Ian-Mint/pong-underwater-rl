@@ -189,7 +189,7 @@ class TestActor(unittest.TestCase):
 
         model = main.initialize_model(main.args.architecture)
         memory_queue, params_in, _, param_update_request, _, _, _ = main.get_communication_objects(1)
-        self.actor = underwater_rl.actor.Actor()
+        self.actor = underwater_rl.actor.Actor(,
 
         obs = self.actor.env.reset()
         self.state = underwater_rl.actor.get_state(obs)

@@ -165,8 +165,8 @@ def get_parser() -> argparse.ArgumentParser:
                              help='Resume training switch. (omit to start from scratch)')
     resume_args.add_argument('--checkpoint', default='dqn.torch',
                              help='Checkpoint to load if resuming (default: dqn.torch)')
-    resume_args.add_argument('--history', default='history.p',
-                             help='History to load if resuming (default: history.p)')
+    resume_args.add_argument('--start-episode', dest='start_episode', default=0, type=int,
+                             help='If resuming, restart at this episode (default: 0)')
     resume_args.add_argument('--store-dir', dest='store_dir',
                              default=os.path.join('..', 'experiments', time.strftime("%Y-%m-%d %H.%M.%S")),
                              help='Path to directory to store experiment results (default: ./experiments/<timestamp>/')
@@ -236,7 +236,8 @@ def test(args, logger):
                   render_mode=args.render,
                   global_args=args,
                   logger=logger,
-                  actor_params=actor_params)
+                  actor_params=actor_params,
+                  start_episode=args.start_episode)
 
     actor.start()
 
@@ -306,7 +307,8 @@ def train(args, logger, log_queue):
                   model_params=model_params,
                   global_args=args,
                   log_queue=log_queue,
-                  actor_params=actor_params)
+                  actor_params=actor_params,
+                  start_episode=args.start_episode)
         actors.append(a)
 
     learner = Learner(optimizer=optim.Adam,

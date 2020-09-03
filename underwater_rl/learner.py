@@ -401,7 +401,7 @@ class Learner(BaseWorker):
 
     def _copy_params(self) -> None:
         """
-        Update the pipe every 2.5 seconds. Keep a lock to the pipe while it is being updated.
+        Update the pipe every 2.5 seconds. Keep a lock to the parameters while it is being updated.
         """
         while True:
             with self.policy_lock:

@@ -121,6 +121,7 @@ class Actor(BaseWorker):
                  global_args: argparse.Namespace,
                  log_queue: torch.multiprocessing.Queue,
                  actor_params: Dict[str, Union[int, float]],
+                 start_episode=0,
                  image_dir: str = None):
         r"""
         Continually steps the environment and pushes experiences to replay memory
@@ -156,7 +157,7 @@ class Actor(BaseWorker):
         type(self).counter += 1
 
         self.logger = None
-        self.episode = 0
+        self.episode = start_episode + 1
         self.total_steps = 0
         self.history = []
 
@@ -226,7 +227,7 @@ class Actor(BaseWorker):
         self.logger.info(f"Actor-{self.id} done")
 
     def _main_loop(self):
-        for self.episode in range(1, self.n_episodes + 1):
+        for self.episode in range(self.episode, self.episode + self.n_episodes):
             self._run_episode()
             self.logger.debug(f"Actor-{self.id}, episode {self.episode} complete")
             self._log_episode()
@@ -370,7 +371,8 @@ class ActorTest(Actor):
                  global_args: argparse.Namespace,
                  actor_params: Dict[str, Union[int, float]],
                  logger: logging.Logger,
-                 image_dir: str = None):
+                 image_dir: str = None,
+                 start_episode: int = 0):
         r"""
         Continually steps the environment and pushes experiences to replay memory
 
@@ -397,7 +399,7 @@ class ActorTest(Actor):
         self.id = self.counter
         type(self).counter += 1
 
-        self.episode = 0
+        self.episode = start_episode
         self.total_steps = 0
         self.history = []
         self.memory = []

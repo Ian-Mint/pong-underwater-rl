@@ -27,9 +27,9 @@ replay: 100000
 batch_size: 512
 #compress:  # comment out to turn off
 actors: 10
-samplers: 16
+samplers: 12
 
 # File control options
 #resume:  # comment out to turn off
-#checkpoint: dqn_pong_model
-#history: history.p
+#checkpoint: dqn.torch
+start-episode: 0
