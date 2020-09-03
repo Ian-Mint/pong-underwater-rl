@@ -44,6 +44,8 @@ Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'
 def select_action(state):
     if architecture == 'soft_dqn':
         return select_soft_action(state)
+    elif architecture == 'noisy_dqn':
+        return select_noisy_action(state)
     else:
         return select_e_greedy_action(state)
 
@@ -55,6 +57,12 @@ def select_e_greedy_action(state):
         with torch.no_grad():
             if architecture == 'distribution_dqn':
                 return (policy_net.qvals(state.to(device))).argmax()
+            elif architecture == 'predict_dqn':
+                with torch.no_grad():
+                    predict_model = train_pong.load_model(args.store_dir)
+                    predicted_state = predict_model(state.unsqueeze(2).float()/255, future_seq=4).squeeze(1)*255
+                    full_state_batch = torch.cat((state.float().to(device), predicted_state), dim=1)
+                return policy_net(full_state_batch).max(1)[1]
             else:
                 return policy_net(state.to(device)).max(1)[1]
     else:
@@ -69,6 +77,11 @@ def get_epsilon(epoch, steps_done):
         eps_threshold = EPS_END + (EPS_START - EPS_END) * \
                         math.exp(-1. * epoch / EPS_DECAY)
     return eps_threshold
+
+
+def select_noisy_action(state):
+    with torch.no_grad():
+        return policy_net(state.to(device)).max(1)[1]
 
 
 def select_soft_action(state):
@@ -150,9 +163,9 @@ def optimize_predict():
     # predict
     predict_model = train_pong.load_model(args.store_dir)
     with torch.no_grad():
-        predicted_state_batch = predict_model(state_batch.unsqueeze(2).float()).squeeze()
+        predicted_state_batch = predict_model(state_batch.unsqueeze(2).float()/255, future_seq=4).squeeze()*255
         full_state_batch = torch.cat((state_batch.float(), predicted_state_batch), dim=1)
-        predicted_next_batch = predict_model(non_final_next_states.unsqueeze(2).float()).squeeze()
+        predicted_next_batch = predict_model(non_final_next_states.unsqueeze(2).float()/255, future_seq=4).squeeze()*255
         full_next_batch = torch.cat((non_final_next_states.float(), predicted_next_batch), dim=1)
 
     state_action_values = forward_policy(action_batch, full_state_batch)
@@ -161,7 +174,7 @@ def optimize_predict():
 
     loss = get_loss(state_action_values, expected_state_action_values, idxs, weights)
     step_optimizer(loss)
-    
+
 
 def forward_policy(action_batch, state_batch):
     return policy_net(state_batch).gather(1, action_batch)
@@ -238,12 +251,12 @@ def main_training_loop(n_episodes, render_mode=False):
     """
     global epoch
     save_dir = os.path.join(args.store_dir, 'video')
-    
+
     if args.train_prediction:
-        train_pong.initial(args.store_dir)
+        train_pong.initial(args.store_dir, logger=logger)
     for episode in range(1, n_episodes + 1):
         train_episode(episode, render_mode, save_dir)
-        if args.train_prediction and episode > n_episodes//100:
+        if args.train_prediction and args.pred_episode < episode <= args.pred_episode+1000:
             if episode%20 == 1:
                 logger.info(f'Start training prediction on {device} in episode {episode}~{episode+19}')
             train_prediction()
@@ -408,6 +421,10 @@ def train_prediction():
     train_loader = train_pong.train_dataloader(replay=memory)
     training_loss = train_pong.training(dataloader=train_loader, store_dir=args.store_dir, learning_rate=LR, logger=logger)
 
+def test_prediction():
+    test_loader = train_pong.test_dataloader(replay=memory)
+    training_loss = train_pong.testing(dataloader=test_loader, store_dir=args.store_dir)
+
 def get_logger(store_dir):
     log_path = os.path.join(store_dir, 'output.log')
     logger = logging.Logger('train_status', level=logging.DEBUG)
@@ -491,6 +508,10 @@ def get_models(architecture, n_actions):
         policy_net = DuelingDQN(n_actions=n_actions).to(device)
         target_net = DuelingDQN(n_actions=n_actions).to(device)
         target_net.load_state_dict(policy_net.state_dict())
+    elif architecture == 'attention_dqn':
+        policy_net = AttentionDQN(n_actions=n_actions).to(device)
+        target_net = AttentionDQN(n_actions=n_actions).to(device)
+        target_net.load_state_dict(policy_net.state_dict())
     elif architecture == 'lstm':
         policy_net = DRQN(n_actions=n_actions).to(device)
         target_net = DRQN(n_actions=n_actions).to(device)
@@ -502,6 +523,10 @@ def get_models(architecture, n_actions):
     elif architecture == 'predict_dqn':
         policy_net = DQN(in_channels=8, n_actions=n_actions).to(device)
         target_net = DQN(in_channels=8, n_actions=n_actions).to(device)
+        target_net.load_state_dict(policy_net.state_dict())
+    elif architecture == 'noisy_dqn':
+        policy_net = NoisyDQN(n_actions=n_actions).to(device)
+        target_net = NoisyDQN(n_actions=n_actions).to(device)
         target_net.load_state_dict(policy_net.state_dict())
     else:
         if architecture == 'resnet18':
@@ -523,6 +548,7 @@ def get_models(architecture, n_actions):
                     dueling_dqn,
                     distribution_dqn,
                     predict_dqn,
+                    noisy_dqn,
                     lstm,
                     Resnet:
                         resnet18,
@@ -614,7 +640,7 @@ def get_parser():
                          help='learning rate (default: 1e-4)')
     rl_args.add_argument('--network', default='dqn_pong_model',
                          choices=['dqn_pong_model', 'soft_dqn', 'dueling_dqn', 'resnet18', 'resnet10', 'resnet12',
-                                  'resnet14', 'lstm', 'distribution_dqn'],
+                                  'resnet14', 'noisy_dqn', 'predict_dqn', 'lstm', 'distribution_dqn', 'attention_dqn'],
                          help='choose a network architecture (default: dqn_pong_model)')
     rl_args.add_argument('--double', default=False, action='store_true',
                          help='switch for double dqn (default: False)')
@@ -640,7 +666,9 @@ def get_parser():
                          help="network training batch size or sequence length for recurrent networks")
     rl_args.add_argument('--train-prediction', dest='train_prediction', default=False, action='store_true',
                          help='train prediction(default: False)')
-    
+    rl_args.add_argument('--pred-episode', dest='pred_episode', default=1000, type=int,
+                         help="when to start training prediction model")
+
     '''resume args'''
     resume_args = parser.add_argument_group("Resume", "Store experiments / Resume training")
     resume_args.add_argument('--resume', dest='resume', action='store_true',

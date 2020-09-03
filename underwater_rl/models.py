@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,7 +9,7 @@ except ImportError:
     from torch.utils.model_zoo import load_url as load_state_dict_from_url
 
 __all__ = ['DQNbn', 'DQN', 'DuelingDQN', 'softDQN', 'DistributionalDQN', 'ResNet', 'resnet18', 'resnet10', 'resnet12',
-           'resnet14', 'PolicyGradient', 'Actor', 'Critic', 'DRQN']
+           'resnet14', 'PolicyGradient', 'NoisyDQN', 'Actor', 'Critic', 'DRQN', 'AttentionDQN']
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
 
@@ -217,6 +218,55 @@ class DuelingDQN(nn.Module):
 
         return action_value_out
 
+class AttentionDQN(nn.Module):
+    def __init__(self, in_channels=4, n_actions=14, **kwargs):
+        """
+        Initialize Deep Q Network
+
+        Args:
+            in_channels (int): number of input channels
+            n_actions (int): number of outputs
+        """
+        super(AttentionDQN, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+
+        self.encoder_att = nn.Linear(49, 21)
+        self.full_att = nn.Linear(21, 1)
+        self.relu = nn.ReLU()
+        self.softmax = nn.Softmax(dim=1)
+
+        self.action_fc = nn.Linear(49, 21)
+        self.state_value_fc = nn.Linear(64 * 7 * 7, 512)
+        self.action_value = nn.Linear(21, n_actions)
+        self.state_value = nn.Linear(512, n_actions)
+
+    def forward(self, x):
+        x = x.float() / 255
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+
+        encoder_out = x.reshape(x.size(0), x.size(1), -1)
+        att1 = self.encoder_att(encoder_out)
+        att = self.full_att(self.relu(att1)).squeeze(2)
+        alpha = self.softmax(att)
+        attention_weighted_encoding = (encoder_out * alpha.unsqueeze(2)).sum(dim=1)
+
+        action_fc = F.relu(self.action_fc(attention_weighted_encoding.reshape(x.size(0), -1)))
+        action_value = self.action_value(action_fc)
+
+        state_value_fc = F.relu(self.state_value_fc(x.reshape(x.size(0), -1)))
+        state_value = self.state_value(state_value_fc)
+
+        action_value_mean = torch.mean(action_value, dim=1, keepdim=True)
+        action_value_center = action_value - action_value_mean
+
+        action_value_out = state_value + action_value_center
+
+        return action_value_out
+
 
 class softDQN(nn.Module):
     def __init__(self, in_channels=4, n_actions=14, **kwargs):
@@ -246,6 +296,53 @@ class softDQN(nn.Module):
     def getV(self, q_value):
         v = self.alpha * torch.log(torch.sum(torch.exp(q_value / self.alpha), dim=1, keepdim=True))
         return v
+
+
+class NoisyLinear(nn.Linear):
+    def __init__(self, in_features, out_features, sigma_init=0.017, bias=True):
+        super(NoisyLinear, self).__init__(in_features, out_features, bias=bias)
+        self.sigma_weight = nn.Parameter(torch.full((out_features, in_features), sigma_init))
+        self.register_buffer("epsilon_weight", torch.zeros(out_features, in_features))
+        if bias:
+            self.sigma_bias = nn.Parameter(torch.full((out_features,), sigma_init))
+            self.register_buffer("epsilon_bias", torch.zeros(out_features))
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        std = math.sqrt(3 / self.in_features)
+        self.weight.data.uniform_(-std, std)
+        self.bias.data.uniform_(-std, std)
+
+    def forward(self, input):
+        self.epsilon_weight.normal_()
+        bias = self.bias
+        if bias is not None:
+            self.epsilon_bias.normal_()
+            bias = bias + self.sigma_bias * self.epsilon_bias.data
+        return F.linear(input, self.weight + self.sigma_weight * self.epsilon_weight.data, bias)
+
+class NoisyDQN(nn.Module):
+    def __init__(self, in_channels=4, n_actions=14):
+        super(NoisyDQN, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels, 32, kernel_size=8, stride=4)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=4, stride=2)
+        self.conv3 = nn.Conv2d(64, 64, kernel_size=3, stride=1)
+        self.fc4 = NoisyLinear(7 * 7 * 64, 512)
+        self.head = NoisyLinear(512, n_actions)
+
+    def forward(self, x):
+        x = x.float() / 255
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.fc4(x.reshape(x.size(0), -1)))
+        return self.head(x)
+
+    def noisy_layers_sigma_snr(self):
+        return [
+            ((layer.weight ** 2).mean().sqrt() / (layer.sigma_weight ** 2).mean().sqrt()).item()
+            for layer in self.noisy_layers
+        ]
 
 
 class DistributionalDQN(nn.Module):
