@@ -4,8 +4,20 @@ metadata:
   name: ${job_name} # specify your job name here
 spec:
   template:
+    metadata:
+      labels:
+        type: distributed
     spec:
       affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: type
+                    operator: In
+                    values:
+                      - distributed
+              topologyKey: "kubernetes.io/hostname"
         nodeAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
             nodeSelectorTerms:
