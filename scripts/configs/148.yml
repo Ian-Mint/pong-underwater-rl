@@ -17,7 +17,7 @@ state: "binary"
 update_prob: 0.4
 
 # Model and training options
-episodes: 4000
+episodes: 300
 learning_rate: 1e-4
 network: noisy
 replay: 100000
