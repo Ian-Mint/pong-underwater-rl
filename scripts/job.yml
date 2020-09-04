@@ -10,13 +10,13 @@ spec:
         image: gitlab-registry.nautilus.optiputer.net/jiacheng/docker-images:gym
         command: ["/bin/bash","-c"]
         args:
-        - cd /data/${user}/pong-underwater-rl;
-          git fetch origin ${branch};
-          git checkout ${branch};
-          git pull origin ${branch};
+        - cd /data/{user}/pong-underwater-rl;
+          git fetch origin {branch};
+          git checkout {branch};
+          git pull origin {branch};
           pip install -e gym-dynamic-pong;
           cd underwater_rl;
-          python main.py ${options};
+          python main.py {options};
         volumeMounts:
         - mountPath: /data
           name: data
