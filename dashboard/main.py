@@ -4,8 +4,10 @@ Usage:
 """
 import json
 import os.path
+import time
 from typing import List
 
+import chart_studio.plotly as py
 import dash_bootstrap_components as dbc
 import dash_core_components as dcc
 import dash_html_components as html
@@ -13,6 +15,7 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from dash.exceptions import PreventUpdate
 from dash.dependencies import Input, Output, State
 
 from dashboard import app
@@ -65,6 +68,8 @@ app.layout = html.Div(
         # Hidden Divs
         html.Div(id='reward-plot-data', style={'display': 'none'}),
         html.Div(id='step-plot-data', style={'display': 'none'}),
+        html.Div(id='dummy1', style={'display': 'none'}),
+        html.Div(id='dummy2', style={'display': 'none'}),
 
         # Header
         html.Div(
@@ -111,6 +116,8 @@ app.layout = html.Div(
                                     step=1,
                                     value=10,
                                 ),
+                                dbc.Button("Edit Rewards", color="primary", className="mr-1", id='edit-reward-button'),
+                                dbc.Button("Edit Steps", color="success", className="mr-1", id='edit-steps-button')
                             ]
                         ),
                     ],
@@ -306,6 +313,19 @@ def display_rewards_plot(json_fig) -> go.Figure:
 
 
 @app.callback(
+    Output('dummy1', 'children'),
+    [Input('edit-reward-button', 'n_clicks')],
+    [State('reward-plot-data', 'children'),
+     State('experiment-selector', 'value')],
+    prevent_initial_call=True
+)
+def on_rewards_button_click(n_clicks, json_fig, experiments):
+    fig = load_figure_from_json(json_fig)
+    py.plot(fig, filename=f'rewards {", ".join(experiments)} {time.strftime("%Y-%m-%d %H.%M.%S")}')
+    raise PreventUpdate
+
+
+@app.callback(
     Output('step-plot-data', 'children'),
     [Input('experiment-selector', 'value'),
      Input('moving-avg-slider', 'value')]
@@ -324,6 +344,19 @@ def make_steps_plot(experiments: List[str], moving_avg_window: int) -> str:
 )
 def display_steps_plot(json_fig) -> go.Figure:
     return load_figure_from_json(json_fig)
+
+
+@app.callback(
+    Output('dummy2', 'children'),
+    [Input('edit-steps-button', 'n_clicks')],
+    [State('step-plot-data', 'children'),
+     State('experiment-selector', 'value')],
+    prevent_initial_call=True
+)
+def on_rewards_button_click(n_clicks, json_fig, experiments):
+    fig = load_figure_from_json(json_fig)
+    py.plot(fig, filename=f'steps {", ".join(experiments)} {time.strftime("%Y-%m-%d %H.%M.%S")}')
+    raise PreventUpdate
 
 
 def load_figure_from_json(json_fig):
