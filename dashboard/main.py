@@ -2,6 +2,7 @@
 Usage:
 `python dashboard.py`
 """
+import json
 import os.path
 from typing import List
 
@@ -60,6 +61,10 @@ app.layout = html.Div(
     [
         # empty Div to trigger javascript file for graph resizing
         html.Div(id='output-clientside'),
+
+        # Hidden Divs
+        html.Div(id='reward-plot-data', style={'display': 'none'}),
+        html.Div(id='step-plot-data', style={'display': 'none'}),
 
         # Header
         html.Div(
@@ -280,29 +285,50 @@ def update_moving_avg_slider_text(value: int) -> List:
 
 
 @app.callback(
-    Output('reward-plot', 'figure'),
+    Output('reward-plot-data', 'children'),
     [Input('experiment-selector', 'value'),
      Input('moving-avg-slider', 'value')]
 )
-def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figure:
+def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> str:
     if not experiments:
         fig = get_empty_sunburst("Select an experiment")
     else:
         fig = get_reward_plot(experiments, moving_avg_window)
-    return fig
+    return fig.to_json()
 
 
 @app.callback(
-    Output('step-plot', 'figure'),
+    Output('reward-plot', 'figure'),
+    [Input('reward-plot-data', 'children')]
+)
+def display_rewards_plot(json_fig) -> go.Figure:
+    return load_figure_from_json(json_fig)
+
+
+@app.callback(
+    Output('step-plot-data', 'children'),
     [Input('experiment-selector', 'value'),
      Input('moving-avg-slider', 'value')]
 )
-def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figure:
+def make_steps_plot(experiments: List[str], moving_avg_window: int) -> str:
     if not experiments:
         fig = get_empty_sunburst("Select an experiment")
     else:
         fig = get_step_plot(experiments, moving_avg_window)
-    return fig
+    return fig.to_json()
+
+
+@app.callback(
+    Output('step-plot', 'figure'),
+    [Input('step-plot-data', 'children')]
+)
+def display_steps_plot(json_fig) -> go.Figure:
+    return load_figure_from_json(json_fig)
+
+
+def load_figure_from_json(json_fig):
+    dict_fig = json.loads(json_fig)
+    return go.Figure(data=dict_fig['data'], layout=dict_fig['layout'])
 
 
 @app.callback(
