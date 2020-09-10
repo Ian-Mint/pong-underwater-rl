@@ -2,28 +2,25 @@
 Usage:
 `python dashboard.py`
 """
+import json
 import os.path
-from typing import List, Dict, Union
-import sys
+import time
+from typing import List
 
-import dash
+import chart_studio.plotly as py
 import dash_bootstrap_components as dbc
 import dash_core_components as dcc
 import dash_html_components as html
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from dash.exceptions import PreventUpdate
 from dash.dependencies import Input, Output, State
-import numpy as np
 
-try:
-    from .utils import *
-    from .data_loader import *
-    from ..dashboard import app
-except ImportError:
-    from utils import *
-    from data_loader import *
-    from __init__ import app
+from dashboard import app
+from dashboard.data_loader import *
+from dashboard.utils import *
 
 grid_searches = get_grid_searches()
 grid_search_params = get_all_grid_search_params()
@@ -67,6 +64,12 @@ app.layout = html.Div(
     [
         # empty Div to trigger javascript file for graph resizing
         html.Div(id='output-clientside'),
+
+        # Hidden Divs
+        html.Div(id='reward-plot-data', style={'display': 'none'}),
+        html.Div(id='step-plot-data', style={'display': 'none'}),
+        html.Div(id='dummy1', style={'display': 'none'}),
+        html.Div(id='dummy2', style={'display': 'none'}),
 
         # Header
         html.Div(
@@ -113,6 +116,8 @@ app.layout = html.Div(
                                     step=1,
                                     value=10,
                                 ),
+                                dbc.Button("Edit Rewards", color="primary", className="mr-1", id='edit-reward-button'),
+                                dbc.Button("Edit Steps", color="success", className="mr-1", id='edit-steps-button')
                             ]
                         ),
                     ],
@@ -287,29 +292,76 @@ def update_moving_avg_slider_text(value: int) -> List:
 
 
 @app.callback(
-    Output('reward-plot', 'figure'),
+    Output('reward-plot-data', 'children'),
     [Input('experiment-selector', 'value'),
      Input('moving-avg-slider', 'value')]
 )
-def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figure:
+def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> str:
     if not experiments:
         fig = get_empty_sunburst("Select an experiment")
     else:
         fig = get_reward_plot(experiments, moving_avg_window)
-    return fig
+    return fig.to_json()
 
 
 @app.callback(
-    Output('step-plot', 'figure'),
+    Output('reward-plot', 'figure'),
+    [Input('reward-plot-data', 'children')]
+)
+def display_rewards_plot(json_fig) -> go.Figure:
+    return load_figure_from_json(json_fig)
+
+
+@app.callback(
+    Output('dummy1', 'children'),
+    [Input('edit-reward-button', 'n_clicks')],
+    [State('reward-plot-data', 'children'),
+     State('experiment-selector', 'value')],
+    prevent_initial_call=True
+)
+def on_rewards_button_click(n_clicks, json_fig, experiments):
+    fig = load_figure_from_json(json_fig)
+    py.plot(fig, filename=f'rewards {", ".join(experiments)} {time.strftime("%Y-%m-%d %H.%M.%S")}')
+    raise PreventUpdate
+
+
+@app.callback(
+    Output('step-plot-data', 'children'),
     [Input('experiment-selector', 'value'),
      Input('moving-avg-slider', 'value')]
 )
-def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> go.Figure:
+def make_steps_plot(experiments: List[str], moving_avg_window: int) -> str:
     if not experiments:
         fig = get_empty_sunburst("Select an experiment")
     else:
         fig = get_step_plot(experiments, moving_avg_window)
-    return fig
+    return fig.to_json()
+
+
+@app.callback(
+    Output('step-plot', 'figure'),
+    [Input('step-plot-data', 'children')]
+)
+def display_steps_plot(json_fig) -> go.Figure:
+    return load_figure_from_json(json_fig)
+
+
+@app.callback(
+    Output('dummy2', 'children'),
+    [Input('edit-steps-button', 'n_clicks')],
+    [State('step-plot-data', 'children'),
+     State('experiment-selector', 'value')],
+    prevent_initial_call=True
+)
+def on_rewards_button_click(n_clicks, json_fig, experiments):
+    fig = load_figure_from_json(json_fig)
+    py.plot(fig, filename=f'steps {", ".join(experiments)} {time.strftime("%Y-%m-%d %H.%M.%S")}')
+    raise PreventUpdate
+
+
+def load_figure_from_json(json_fig):
+    dict_fig = json.loads(json_fig)
+    return go.Figure(data=dict_fig['data'], layout=dict_fig['layout'])
 
 
 @app.callback(
@@ -404,7 +456,6 @@ if __name__ == '__main__':
     # noinspection PyTypeChecker
     app.run_server(debug=True,
                    dev_tools_hot_reload=False,
-                   # host=os.getenv("HOST", "127.0.0.1"),
-                   host=os.getenv("HOST", "192.168.1.10"),
+                   host=os.getenv("HOST", "127.0.0.1"),
                    port=os.getenv("PORT", "8050"),
                    )
