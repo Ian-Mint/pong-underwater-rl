@@ -1,6 +1,7 @@
 name: pong-underwater-rl
 channels:
   - powerai
+  - plotly
   - conda-forge
   - pytorch
   - defaults
@@ -16,6 +17,7 @@ dependencies:
   - dash
   - dash-bootstrap-components
   - flask-caching
+  - chart-studio
   - yaml
   - gym
 
