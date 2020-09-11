@@ -107,6 +107,12 @@ app.layout = html.Div(
                                     options=get_experiments(),
                                     multi=True
                                 ),
+                                dcc.Dropdown(
+                                    id='plot-type-selector',
+                                    options=[dict(label='line', value='line'), dict(label='scatter', value='scatter')],
+                                    multi=False,
+                                    value='line'
+                                ),
                                 html.Br(),
                                 html.P("Moving average length:", id='moving-avg-slider-text'),
                                 dcc.Slider(
@@ -294,13 +300,14 @@ def update_moving_avg_slider_text(value: int) -> List:
 @app.callback(
     Output('reward-plot-data', 'children'),
     [Input('experiment-selector', 'value'),
-     Input('moving-avg-slider', 'value')]
+     Input('moving-avg-slider', 'value'),
+     Input('plot-type-selector', 'value')]
 )
-def make_rewards_plot(experiments: List[str], moving_avg_window: int) -> str:
+def make_rewards_plot(experiments: List[str], moving_avg_window: int, plot_type: str) -> str:
     if not experiments:
         fig = get_empty_sunburst("Select an experiment")
     else:
-        fig = get_reward_plot(experiments, moving_avg_window)
+        fig = get_reward_plot(experiments, moving_avg_window, plot_type)
     return fig.to_json()
 
 
@@ -328,13 +335,14 @@ def on_rewards_button_click(n_clicks, json_fig, experiments):
 @app.callback(
     Output('step-plot-data', 'children'),
     [Input('experiment-selector', 'value'),
-     Input('moving-avg-slider', 'value')]
+     Input('moving-avg-slider', 'value'),
+     Input('plot-type-selector', 'value')]
 )
-def make_steps_plot(experiments: List[str], moving_avg_window: int) -> str:
+def make_steps_plot(experiments: List[str], moving_avg_window: int, plot_type: str) -> str:
     if not experiments:
         fig = get_empty_sunburst("Select an experiment")
     else:
-        fig = get_step_plot(experiments, moving_avg_window)
+        fig = get_step_plot(experiments, moving_avg_window, plot_type)
     return fig.to_json()
 
 
@@ -441,15 +449,26 @@ def make_grid_search_plot(grid_search, axis_params, *args):
 
 
 @fig_formatter(t=50)
-def get_reward_plot(experiments: List[str], moving_avg_len) -> go.Figure:
+def get_reward_plot(experiments: List[str], moving_avg_len, plot_type) -> go.Figure:
     df = get_rewards_history_df(experiments, moving_avg_len)
-    return px.scatter(df, labels=dict(value='reward', index='episode', variable='experiment'), opacity=0.3)
+    if plot_type == 'scatter':
+        return px.scatter(df, labels=dict(value='reward', index='episode', variable='experiment'), opacity=0.3)
+    elif plot_type == 'line':
+        return px.line(df, labels=dict(value='reward', index='episode', variable='experiment'))
+    else:
+        raise ValueError(f"Invalid plot type {plot_type}")
 
 
 @fig_formatter(t=50)
-def get_step_plot(experiments: List[str], moving_avg_len) -> go.Figure:
+def get_step_plot(experiments: List[str], moving_avg_len, plot_type) -> go.Figure:
     df = get_steps_history_df(experiments, moving_avg_len)
-    return px.scatter(df, labels=dict(value='steps', index='episode', variable='experiment'), opacity=0.3)
+    if plot_type == 'scatter':
+        return px.scatter(df, labels=dict(value='steps', index='episode', variable='experiment'), opacity=0.3)
+    elif plot_type == 'line':
+        return px.line(df, labels=dict(value='steps', index='episode', variable='experiment'))
+    else:
+        raise ValueError(f"Invalid plot type {plot_type}")
+
 
 
 if __name__ == '__main__':
