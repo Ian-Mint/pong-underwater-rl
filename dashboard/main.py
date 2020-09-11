@@ -443,13 +443,13 @@ def make_grid_search_plot(grid_search, axis_params, *args):
 @fig_formatter(t=50)
 def get_reward_plot(experiments: List[str], moving_avg_len) -> go.Figure:
     df = get_rewards_history_df(experiments, moving_avg_len)
-    return px.line(df, labels=dict(value='reward', index='episode', variable='experiment'))
+    return px.scatter(df, labels=dict(value='reward', index='episode', variable='experiment'), opacity=0.3)
 
 
 @fig_formatter(t=50)
 def get_step_plot(experiments: List[str], moving_avg_len) -> go.Figure:
     df = get_steps_history_df(experiments, moving_avg_len)
-    return px.line(df, labels=dict(value='steps', index='episode', variable='experiment'))
+    return px.scatter(df, labels=dict(value='steps', index='episode', variable='experiment'), opacity=0.3)
 
 
 if __name__ == '__main__':

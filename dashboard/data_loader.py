@@ -32,9 +32,14 @@ def load_history(experiment_dir: str) -> List[Tuple[float, int]]:
 
 
 def _parse_history_from_log(file):
+    """
+    Does not exactly display based on the real episode number. Instead, groups of `n_actors` episodes are considered a
+    single episode.
+    """
     actor_pattern = re.compile(r'(?<=--actors )\d+')
     reward_pattern = re.compile(r'(?<=Reward: )[-\d]\d*')
     steps_pattern = re.compile(r'(?<=Steps: )\d+')
+    # either begins with 'Actor' or a timestamp
     full_pattern = re.compile(r'^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} INFO {4}\| )?'
                               r'Actor: \d+ *\tTotal steps: \d+ *\tEpisode: \d+ *\tReward: [-\d]\d* *\tSteps: \d+$')
     history = []
