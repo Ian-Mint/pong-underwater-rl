@@ -1,6 +1,7 @@
 """
 Usage:
-`python dashboard.py`
+From the root directory
+`python -m dashboard`
 """
 import json
 import os.path
