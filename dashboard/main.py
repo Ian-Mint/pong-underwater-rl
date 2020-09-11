@@ -451,10 +451,11 @@ def make_grid_search_plot(grid_search, axis_params, *args):
 @fig_formatter(t=50)
 def get_reward_plot(experiments: List[str], moving_avg_len, plot_type) -> go.Figure:
     df = get_rewards_history_df(experiments, moving_avg_len)
+    labels = dict(value='reward', index='episode', variable='experiment')
     if plot_type == 'scatter':
-        return px.scatter(df, labels=dict(value='reward', index='episode', variable='experiment'), opacity=0.3)
+        return px.scatter(df, labels=labels, opacity=0.3)
     elif plot_type == 'line':
-        return px.line(df, labels=dict(value='reward', index='episode', variable='experiment'))
+        return px.line(df, labels=labels)
     else:
         raise ValueError(f"Invalid plot type {plot_type}")
 
@@ -462,10 +463,11 @@ def get_reward_plot(experiments: List[str], moving_avg_len, plot_type) -> go.Fig
 @fig_formatter(t=50)
 def get_step_plot(experiments: List[str], moving_avg_len, plot_type) -> go.Figure:
     df = get_steps_history_df(experiments, moving_avg_len)
+    labels = dict(value='steps', index='episode', variable='experiment')
     if plot_type == 'scatter':
-        return px.scatter(df, labels=dict(value='steps', index='episode', variable='experiment'), opacity=0.3)
+        return px.scatter(df, labels=labels, opacity=0.3)
     elif plot_type == 'line':
-        return px.line(df, labels=dict(value='steps', index='episode', variable='experiment'))
+        return px.line(df, labels=labels)
     else:
         raise ValueError(f"Invalid plot type {plot_type}")
 
