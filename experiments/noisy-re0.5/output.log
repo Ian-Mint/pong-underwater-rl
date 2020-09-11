@@ -1,0 +1,29 @@
+2020-09-11 07:08:46,694	INFO	--width 160 --height 160 --ball 1.0 --ball-size 2.0 --snell 0.5 --snell-width 80.0 --snell-change 0 --snell-visible none --paddle-speed 1.0 --paddle-angle 70 --paddle-length 20 --update-prob 0.4 --state binary --learning-rate 0.0001 --network noisy_dqn --render False --epsdecay 1000 --episodes 4000 --replay 100000 --batch-size 32 --pred-episode 1000 --checkpoint ../experiments/noisy/dqn_pong_model --history ../experiments/noisy/history.p --store-dir ../experiments/noisy-re0.5 
+2020-09-11 07:08:46,695	INFO	Device: cuda
+2020-09-11 07:08:56,840	INFO	Loading the trained model
+2020-09-11 07:09:40,416	INFO	--width 160 --height 160 --ball 1.0 --ball-size 2.0 --snell 0.5 --snell-width 80.0 --snell-change 0 --snell-visible none --paddle-speed 1.0 --paddle-angle 70 --paddle-length 20 --update-prob 0.4 --state binary --learning-rate 0.0001 --network noisy_dqn --render False --epsdecay 1000 --episodes 4000 --replay 100000 --batch-size 32 --pred-episode 1000 --checkpoint ../experiments/noisy/dqn_pong_model --history ../experiments/noisy/history.p --store-dir ../experiments/noisy-re0.5 
+2020-09-11 07:09:40,588	INFO	Device: cuda
+2020-09-11 07:09:46,244	INFO	Loading the trained model
+2020-09-11 07:31:53,988	INFO	--width 160 --height 160 --ball 1.0 --ball-size 2.0 --snell 0.5 --snell-width 80.0 --snell-change 0 --snell-visible none --paddle-speed 1.0 --paddle-angle 70 --paddle-length 20 --update-prob 0.4 --state binary --learning-rate 0.0001 --network noisy_dqn --render False --epsdecay 1000 --episodes 4000 --replay 100000 --batch-size 32 --pred-episode 1000 --checkpoint ../experiments/noisy/dqn_pong_model --history ../experiments/noisy/history.p --store-dir ../experiments/noisy-re0.5 
+2020-09-11 07:31:54,175	INFO	Device: cuda
+2020-09-11 07:31:59,150	INFO	Loading the trained model
+2020-09-11 07:54:32,819	INFO	Total steps: 11006255	Episode: 4020/5944	Avg reward: -18.50	Avg steps: 5466
+2020-09-11 08:31:08,762	INFO	Total steps: 11180394	Episode: 4040/4104	Avg reward: -18.35	Avg steps: 8705
+2020-09-11 09:09:17,556	INFO	Total steps: 11357153	Episode: 4060/8023	Avg reward: -18.80	Avg steps: 8836
+2020-09-11 09:58:04,901	INFO	Total steps: 11585898	Episode: 4080/13364	Avg reward: -18.00	Avg steps: 11436
+2020-09-11 10:44:15,311	INFO	Total steps: 11802949	Episode: 4100/10110	Avg reward: -18.25	Avg steps: 10851
+2020-09-11 11:33:38,270	INFO	Total steps: 12037454	Episode: 4120/8179	Avg reward: -18.00	Avg steps: 11724
+2020-09-11 12:14:50,054	INFO	Total steps: 12233198	Episode: 4140/10550	Avg reward: -17.70	Avg steps: 9786
+2020-09-11 13:02:57,518	INFO	Total steps: 12461115	Episode: 4160/16300	Avg reward: -17.60	Avg steps: 11394
+2020-09-11 13:42:34,080	INFO	Total steps: 12645804	Episode: 4180/14949	Avg reward: -18.25	Avg steps: 9233
+2020-09-11 14:25:32,202	INFO	Total steps: 12846874	Episode: 4200/6901	Avg reward: -18.20	Avg steps: 10052
+2020-09-11 15:04:34,540	INFO	Total steps: 13030382	Episode: 4220/5801	Avg reward: -17.85	Avg steps: 9174
+2020-09-11 15:44:32,457	INFO	Total steps: 13219987	Episode: 4240/10552	Avg reward: -18.55	Avg steps: 9479
+2020-09-11 16:24:47,031	INFO	Total steps: 13410445	Episode: 4260/5791	Avg reward: -17.85	Avg steps: 9521
+2020-09-11 17:06:41,224	INFO	Total steps: 13606589	Episode: 4280/6028	Avg reward: -18.30	Avg steps: 9806
+2020-09-11 17:20:01,728	INFO	--width 160 --height 160 --ball 1.0 --ball-size 2.0 --snell 0.5 --snell-width 80.0 --snell-change 0 --snell-visible none --paddle-speed 1.0 --paddle-angle 70 --paddle-length 20 --update-prob 0.4 --state binary --learning-rate 0.0001 --network noisy_dqn --render False --epsdecay 1000 --episodes 4000 --replay 100000 --batch-size 32 --pred-episode 1000 --checkpoint ../experiments/noisy/dqn_pong_model --history ../experiments/noisy/history.p --store-dir ../experiments/noisy-re0.5 
+2020-09-11 17:20:01,798	INFO	Device: cuda
+2020-09-11 17:20:08,537	INFO	Loading the trained model
+2020-09-11 18:12:18,317	INFO	Total steps: 11035448	Episode: 4020/9102	Avg reward: -18.55	Avg steps: 6926
+2020-09-11 19:16:29,862	INFO	Total steps: 11206087	Episode: 4040/9493	Avg reward: -18.80	Avg steps: 8530
+2020-09-11 20:42:35,024	INFO	Total steps: 11419412	Episode: 4060/9047	Avg reward: -18.40	Avg steps: 10665
