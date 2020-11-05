@@ -19,7 +19,8 @@ import argparse
 import os
 import sys
 import time
-from typing import Iterable
+from copy import deepcopy
+from typing import Iterable, List
 
 import torch
 import torch.multiprocessing as mp
@@ -92,8 +93,9 @@ def get_parser() -> argparse.ArgumentParser:
                           help='ball size (default: 2.0)')
     env_args.add_argument('--ball-volume', dest='ball_volume', action='store_true', default=False,
                           help='If set, the ball interacts as if it has volume')
-    env_args.add_argument('--snell', default=1.0, type=float,
-                          help='snell speed (default: 1.0)')
+    env_args.add_argument('--snell', default=1.0, type=float, nargs='+',
+                          help='snell speed (default: 1.0); or {min, max}, s.t. snell speed is min for actor 1, '
+                               'max for actor `n`, and interpolated between')
     env_args.add_argument('--no-refraction', dest='no_refraction', default=False, action='store_true',
                           help='set to disable refraction')
     env_args.add_argument('--uniform-speed', dest='uniform_speed', default=False, action='store_true',
@@ -203,6 +205,7 @@ def main() -> None:
     """
     parser = get_parser()
     args = parser.parse_args()
+    args_list = process_args(args)
     create_storage_dir(args.store_dir)
 
     logger, log_queue = get_logger(args.store_dir)
@@ -210,13 +213,40 @@ def main() -> None:
     logger.info(f'Device: {DEVICE}')
 
     if args.test:
-        test(args, logger)
+        test(args_list, logger)
     else:
-        train(args, logger, log_queue)
+        train(args_list, logger, log_queue)
 
 
-def test(args, logger):
+def process_args(args: argparse.Namespace) -> List[argparse.Namespace]:
+    """
+    Process and validate the input arguments.
+
+    This allows for different parameters to be set for the environments of different actors.
+    Returns a list of the same length as the number of actors.
+    """
+    if isinstance(args.snell, list):
+        assert len(args.snell) in {1, 2}, \
+            "--snell takes one value or (min, max) s.t. the snell speed is different for each actor"
+        if len(args.snell) == 1:
+            args.snell *= 2
+    else:
+        args.snell = [args.snell, args.snell]
+    snell_min, snell_max = args.snell
+    snell_step = (snell_max - snell_min) / (args.n_actors - 1)
+
+    args_list = []
+    for snell in (i * snell_step + snell_min for i in range(args.n_actors)):
+        tmp_args = deepcopy(args)
+        tmp_args.snell = snell
+        args_list.append(tmp_args)
+
+    return args_list
+
+
+def test(args: List[argparse.Namespace], logger):
     from underwater_rl.actor import ActorTest as Actor
+    args = args[0]
 
     actor_params = {
         'test_mode': True,
@@ -261,7 +291,9 @@ def import_actor(model: str):
 
 
 # noinspection PyPep8Naming
-def train(args, logger, log_queue):
+def train(args_list: List[argparse.Namespace], logger, log_queue):
+    args = args_list[0]
+
     learning_params = {
         'batch_size': args.batch_size,
         'gamma': 0.99,
@@ -274,14 +306,14 @@ def train(args, logger, log_queue):
     if args.steps_decay:
         raise NotImplementedError("steps_decay is not yet implemented")
 
-    actor_params = {
+    actor_params = [{
         'test_mode': False,
-        'architecture': args.network,
-        'steps_decay': args.steps_decay,
-        'eps_decay': args.epsdecay,
+        'architecture': a.network,
+        'steps_decay': a.steps_decay,
+        'eps_decay': a.epsdecay,
         'eps_end': 0.02,
         'eps_start': 1,
-    }
+    } for a in args_list]
 
     replay_params = {
         'memory_size': args.replay,
@@ -298,18 +330,18 @@ def train(args, logger, log_queue):
 
     # Create subprocesses
     actors = []
-    for _ in range(args.n_actors):
-        a = Actor(model=model,
-                  n_episodes=args.episodes,
-                  render_mode=args.render,
-                  memory_queue=comms.memory_q,
-                  replay_in_queue=comms.replay_in_q,
-                  model_params=model_params,
-                  global_args=args,
-                  log_queue=log_queue,
-                  actor_params=actor_params,
-                  start_episode=args.start_episode)
-        actors.append(a)
+    for a, ap in zip(args_list, actor_params):
+        actor = Actor(model=model,
+                      n_episodes=a.episodes,
+                      render_mode=a.render,
+                      memory_queue=comms.memory_q,
+                      replay_in_queue=comms.replay_in_q,
+                      model_params=model_params,
+                      global_args=a,
+                      log_queue=log_queue,
+                      actor_params=ap,
+                      start_episode=a.start_episode)
+        actors.append(actor)
 
     learner = Learner(optimizer=optim.Adam,
                       model=model,
