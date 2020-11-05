@@ -146,6 +146,31 @@ Other options:
 ```shell script
 kubectl create secret generic github --from-literal=gituser=<username> --from-literal=gitpassword=<password>
 ```
+Note:
+If secrets are not stored with the correct name, the job will fail silently. Also, no characters that require HTML
+escaping can be used, e.g. &, @, =. Test that the secret has loaded properly by running a pod with the following lines 
+included in the pod description.
+```yaml
+containers:
+- name: gpu-container
+  ...
+  env:
+  - name: GIT_USERNAME
+    valueFrom:
+      secretKeyRef:
+        name: github
+        key: gituser
+  - name: GIT_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: github
+        key: gitpassword
+```
+
+Then, try running the following command in the pod.
+```shell script
+git push https://${{GIT_USERNAME}}:${{GIT_PASSWORD}}@github.com/Ian-Mint/pong-underwater-rl.git
+````
 
 ## grid-search.py
 
