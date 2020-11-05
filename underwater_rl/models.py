@@ -1,3 +1,5 @@
+import math
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -341,6 +343,7 @@ class NoisyLinear(nn.Linear):
             self.epsilon_bias.normal_()
             bias = bias + self.sigma_bias * self.epsilon_bias.data
         return F.linear(input, self.weight + self.sigma_weight * self.epsilon_weight.data, bias)
+
 
 class NoisyDQN(nn.Module):
     def __init__(self, in_channels=4, n_actions=14):
