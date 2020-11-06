@@ -15,7 +15,7 @@ try:
 except ImportError:
     sys.path.append(os.path.abspath(os.path.pardir))
 from underwater_rl.utils import get_logger_from_process, get_tid
-from underwater_rl.common import Transition
+from underwater_rl.common import Transition, BaseWorker
 
 
 class Memory:
@@ -155,7 +155,7 @@ class Memory:
             yield self[i]
 
 
-class Replay:
+class Replay(BaseWorker):
     r"""
                      +-------------+
     process          |    _main    |
@@ -200,6 +200,9 @@ class Replay:
         self.memory_full_event = mp.Event()
         self._main_proc = mp.Process(target=self._main, name="ReplaySample")
 
+    def is_alive(self) -> bool:
+        return self._main_proc.is_alive()
+
     def __del__(self):
         self._terminate()
 
@@ -234,7 +237,7 @@ class Replay:
         Launch push thread and run push worker in the main thread.
         """
         push_proc = mp.Process(target=self._push_worker, daemon=False, name="ReplayPush")
-        sample_procs = [mp.Process(target=self._sample_worker, daemon=True, name=f"ReplaySampler-{i}", args=(q, ))
+        sample_procs = [mp.Process(target=self._sample_worker, daemon=True, name=f"ReplaySampler-{i}", args=(q,))
                         for i, q in enumerate(self.replay_out_queues)]
         push_proc.start()
         [p.start() for p in sample_procs]

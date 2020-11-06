@@ -109,6 +109,7 @@ class Actor(BaseWorker):
     |Actor|------->|Encoder|
     +-----+        +-------+
     """
+
     counter = 0  # count the number of actor instances
 
     def __init__(self,
@@ -161,7 +162,7 @@ class Actor(BaseWorker):
         self.total_steps = 0
         self.history = []
 
-        self.main_proc = mp.Process(target=self._main, name=f"Actor-{self.id}")
+        self._main_proc = mp.Process(target=self._main, name=f"Actor-{self.id}")
 
     def _parse_options(self, eps_decay: float, eps_end: float, eps_start: float, **kwargs) -> None:
         r"""
@@ -185,6 +186,9 @@ class Actor(BaseWorker):
         else:
             self.device = 'cpu'
 
+    def is_alive(self) -> bool:
+        return self._main_proc.is_alive()
+
     def __del__(self):
         self._terminate()
 
@@ -192,21 +196,21 @@ class Actor(BaseWorker):
         r"""
         Terminate and join running processes
         """
-        if self.main_proc.pid is not None:
-            self.main_proc.terminate()
-            self.main_proc.join()
+        if self._main_proc.pid is not None:
+            self._main_proc.terminate()
+            self._main_proc.join()
 
     def join(self) -> None:
         r"""
         Join the main actor process.
         """
-        self.main_proc.join()
+        self._main_proc.join()
 
     def start(self) -> None:
         r"""
         Start worker processes and threads
         """
-        self.main_proc.start()
+        self._main_proc.start()
 
     def _main(self):
         r"""
@@ -455,12 +459,16 @@ class ActorTest(Actor):
 
 
 class Encoder(BaseWorker):
+
     def __init__(self, log_queue: mp.Queue, replay_in_queue: mp.Queue, memory_queue: mp.Queue, num: int, daemon=True):
         self.log_queue = log_queue
         self.replay_in_queue = replay_in_queue
         self.memory_queue = memory_queue
 
-        self.proc = mp.Process(target=self._main, name=f"Encoder-{num}", daemon=daemon)
+        self._main_proc = mp.Process(target=self._main, name=f"Encoder-{num}", daemon=daemon)
+
+    def is_alive(self) -> bool:
+        return self._main_proc.is_alive()
 
     def __del__(self):
         self._terminate()
@@ -472,14 +480,14 @@ class Encoder(BaseWorker):
         pass
 
     def _terminate(self):
-        self.proc.terminate()
-        self.proc.join()
+        self._main_proc.terminate()
+        self._main_proc.join()
 
     def start(self):
-        self.proc.start()
+        self._main_proc.start()
 
     def join(self):
-        self.proc.join()
+        self._main_proc.join()
 
     def _main(self):
         r"""

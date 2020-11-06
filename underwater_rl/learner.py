@@ -77,8 +77,6 @@ class ProcessedBatch:
 class Decoder(BaseWorker):
     """
     Decoder worker. One or more may be run alongside the learner to process sample batches.
-
-    The bottleneck seems to be with `replay_out_queue`. Currently, two decoders can handle the output.
     """
 
     def __init__(self, log_queue: mp.Queue, replay_out_queue: mp.Queue, sample_queue: mp.Queue, num: int, daemon=True):
@@ -88,6 +86,9 @@ class Decoder(BaseWorker):
         self.id = num
 
         self.proc = mp.Process(target=self._main, name=f"MemoryDecoder-{num}", daemon=daemon)
+
+    def is_alive(self) -> bool:
+        return self.proc.is_alive()
 
     def start(self):
         self.proc.start()
@@ -294,7 +295,7 @@ class Learner(BaseWorker):
         :param checkpoint_path: Checkpoint save path
         :param log_queue: Queue object to be pushed to the log handler for the learner process
         :param learning_params: Parameters to control learning
-        :param run_profile: If `True`, run optimizer with cProfile. 
+        :param run_profile: If `True`, run optimizer with cProfile.
         """
         self.replay_out_queues = replay_out_queues
         self.sample_queue = sample_queue
@@ -318,7 +319,10 @@ class Learner(BaseWorker):
         self.loss = None
         self.epoch = 0
 
-        self.main_proc = mp.Process(target=self._main, name="Learner")
+        self._main_proc = mp.Process(target=self._main, name="Learner")
+
+    def is_alive(self) -> bool:
+        return self._main_proc.is_alive()
 
     def _parse_options(self, batch_size: int, gamma: float, learning_rate: float, **kwargs) -> None:
         """
@@ -348,14 +352,14 @@ class Learner(BaseWorker):
         """
         terminate and join the main process
         """
-        self.main_proc.terminate()
-        self.main_proc.join()
+        self._main_proc.terminate()
+        self._main_proc.join()
 
     def start(self) -> None:
         """
         Start all threads and processes
         """
-        self.main_proc.start()
+        self._main_proc.start()
         del self.policy, self.target  # These have already been copied into the child process
 
     def _main(self) -> None:

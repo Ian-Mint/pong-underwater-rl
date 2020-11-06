@@ -20,7 +20,7 @@ import os
 import sys
 import time
 from copy import deepcopy
-from typing import Iterable, List
+from typing import List
 
 import torch
 import torch.multiprocessing as mp
@@ -35,7 +35,7 @@ if not ('linux' in sys.platform):
     raise Warning(f"{sys.platform} is not supported")
 
 from underwater_rl.actor import N_ACTIONS
-from underwater_rl.common import DEVICE, Comms
+from underwater_rl.common import DEVICE, Comms, run_all, join_first
 from underwater_rl.learner import Learner
 from underwater_rl.models import *
 from underwater_rl.utils import *
@@ -361,31 +361,14 @@ def train(args_list: List[argparse.Namespace], logger, log_queue):
 
     try:
         # Join subprocess. actor is the only one that is not infinite.
-        run_all(actors, 'join')
-        logger.info("All actors finished")
+        join_first(actors)
+        logger.info("Done")
     except KeyboardInterrupt:
         run_all(actors, '__del__')
     finally:
         del replay
         del learner
         manager.shutdown()
-
-
-def run_all(actors: Iterable, method: str, *args, **kwargs) -> None:
-    r"""
-    Executes `method` for all actors in `actors`. Equivalent to
-    ```
-    for a in actors:
-        a.method(*args, **kwargs)
-    ```
-
-    :param actors: Iterable of actor objects
-    :param method: Actor.method to execute
-    :param args:
-    :param kwargs:
-    """
-    for a in actors:
-        a.__getattribute__(method)(*args, **kwargs)
 
 
 def get_communication_objects(n_samplers: int) -> Comms:

@@ -1,6 +1,7 @@
 import abc
+import time
 from collections import namedtuple
-from typing import NamedTuple, List
+from typing import NamedTuple, List, Iterable
 
 import torch
 from torch import multiprocessing as mp
@@ -25,6 +26,9 @@ class BaseWorker(abc.ABC):
     def start(self): ...
 
     @abc.abstractmethod
+    def is_alive(self) -> bool: ...
+
+    @abc.abstractmethod
     def _main(self): ...
 
     @abc.abstractmethod
@@ -41,3 +45,30 @@ class BaseWorker(abc.ABC):
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")  # sets device for model and PyTorch tensors
+
+
+def run_all(workers: Iterable, method: str, *args, **kwargs) -> None:
+    r"""
+    Executes `method` for all actors in `actors`. Equivalent to
+    ```
+    for a in actors:
+        a.method(*args, **kwargs)
+    ```
+
+    :param workers: Iterable of actor objects
+    :param method: Actor.method to execute
+    :param args:
+    :param kwargs:
+    """
+    for a in workers:
+        a.__getattribute__(method)(*args, **kwargs)
+
+
+def join_first(workers: Iterable[BaseWorker]):
+    """
+    Block until one worker is complete. When that happens, terminate all other workers.
+    """
+    while all((w.is_alive() for w in workers)):
+        time.sleep(1)
+
+    run_all(workers, '__del__')
