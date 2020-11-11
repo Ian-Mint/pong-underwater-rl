@@ -82,15 +82,16 @@ class BasicNet(nn.Module):
         """
         super(BasicNet, self).__init__()
         # 4 states x 6 variables input
-        self.conv1 = nn.Conv2d(in_channels, out_channels=32, kernel_size=(2, 1), stride=1)
+        self.fc0 = nn.Linear(in_channels * 4 * 6, out_features=3 * 6 * 32)
+        # self.conv1 = nn.Conv2d(in_channels, out_channels=32, kernel_size=(2, 1), stride=1)
         self.fc1 = nn.Linear(3 * 6 * 32, 512)
         self.fc2 = nn.Linear(512, 512)
         self.head = nn.Linear(512, n_actions)
 
     def forward(self, x):
         x = x.float() / 160  # max value is canvas width=160
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.fc1(x.reshape(x.size(0), -1)))
+        x = F.relu(self.fc0(x.reshape(x.size(0), -1)))
+        x = F.relu(self.fc1(x))
         x = F.relu(self.fc2(x))
         return self.head(x)
 
