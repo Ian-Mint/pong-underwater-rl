@@ -54,7 +54,7 @@ The reader should also take a look at the `distributed` branch, which contains a
 Install one of the [conda](https://docs.conda.io/en/latest/miniconda.html) environments:
 
 ```shell script
-conda create env -f [file]
+conda env create -f [file]
 ```
 
 Where `[file]` is one of the `yml` files in the root.
