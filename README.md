@@ -40,7 +40,7 @@ See [readme](https://github.com/Ian-Mint/pong-underwater-rl/blob/master/gym-dyna
 See [readme](https://github.com/Ian-Mint/pong-underwater-rl/blob/master/scripts/README.md).
 4. `underwater_rl` - The main code for testing and training reinforcement learning on the `gym-dynamic-pong` environment.
 See [main readme](https://github.com/Ian-Mint/pong-underwater-rl/blob/master/underwater_rl/README.md), or 
-[distributed readme](https://github.com/Ian-Mint/pong-underwater-rl/blob/distrubuted/underwater_rl/README.md)
+[distributed readme](https://github.com/Ian-Mint/pong-underwater-rl/blob/distributed/underwater_rl/README.md)
 
 # Branches
 
