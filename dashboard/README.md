@@ -1,5 +1,18 @@
 # Dashboard
 
+```
+.
+├── assets
+│   ├── resizing_script.js
+│   ├── s1.css
+│   ├── styles.css
+│   └── ucsd-logo.png
+├── README.md
+├── test
+│   └── test_utils.py
+└── utils.py
+```
+
 To use the dashboard, install `dash` in a `conda` environment
 ```shell script
 conda install dash

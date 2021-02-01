@@ -34,7 +34,7 @@ First make the script executable:
 chmod +x run-job.py
 ```
 
-Create a configuration file modeled on `default-config.yml`:
+Create a configuration file modeled on `default-config.yml` or `default-config.yml` if on the `distributed` branch:
 ```yaml
 width: 160
 height: 160
