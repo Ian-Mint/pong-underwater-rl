@@ -2,20 +2,20 @@
 
 ![](/underwater_rl/assets/pong.gif)
 
-Neural networks suffer from the phenomenon of catas-
-trophic forgetting which hinders continual or lifelong learn-
-ing and leads to erasure of previously acquired skills. In
+Neural networks suffer from the phenomenon of catastrophic 
+forgetting which hinders continual or lifelong learning
+and leads to erasure of previously acquired skills. In
 this paper, we explore whether catastrophic forgetting can
-be addressed in a dynamic environment within reinforce-
-ment learning context. Our work is intended as a proof of
+be addressed in a dynamic environment within reinforcement
+learning context. Our work is intended as a proof of
 concept for underwater communication in which we control
-the movement of the receiver present underwater to maxi-
-mize the quality of the received audio signal. In particu-
-lar, we find that a distributed noisy network can mitigate
-within task forgetting by learning a more generalizable pol-
-icy which can quickly adapt to changes in the environment.
-However, the issue of catastrophic forgetting is still unre-
-solved. See the [paper](https://github.com/Ian-Mint/pong-underwater-rl/blob/master/paper.pdf)
+the movement of the receiver present underwater to maximize
+the quality of the received audio signal. In particular,
+we find that a distributed noisy network can mitigate
+within task forgetting by learning a more generalizable policy
+which can quickly adapt to changes in the environment.
+However, the issue of catastrophic forgetting is still unresolved.
+See the [paper](https://github.com/Ian-Mint/pong-underwater-rl/blob/master/paper.pdf)
 for further details.
 
 ## Structure
